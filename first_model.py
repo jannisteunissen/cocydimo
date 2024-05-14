@@ -7,15 +7,23 @@ import argparse
 
 parser = argparse.ArgumentParser(
     formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    description='TODO')
-parser.add_argument('-run', type=int, default=0)
-parser.add_argument('-cycle', type=int, default=10)
-parser.add_argument('-r_scale', type=float, default=1.5)
-parser.add_argument('-nsteps', type=int, default=2)
-parser.add_argument('-dt_frac', type=int, default=1)
-parser.add_argument('-box_size', type=int, default=8)
-parser.add_argument('line_data', type=str)
-parser.add_argument('rz_data', type=str)
+    description='Reduced discharge model')
+parser.add_argument('-run', type=int, default=0,
+                    help='Index of run to simulate')
+parser.add_argument('-cycle', type=int, default=10,
+                    help='Start from this cycle')
+parser.add_argument('-r_scale', type=float, default=1.5,
+                    help='Scale factor for the radius')
+parser.add_argument('-nsteps', type=int, default=2,
+                    help='How many steps to simulate')
+parser.add_argument('-dt_frac', type=int, default=1,
+                    help='Reduce dt in model by this factor')
+parser.add_argument('-box_size', type=int, default=8,
+                    help='Size of boxes in afivo')
+parser.add_argument('line_data', type=str,
+                    help='Input numpy file with line data')
+parser.add_argument('rz_data', type=str,
+                    help='Input numpy file with 2D data')
 args = parser.parse_args()
 
 
@@ -77,11 +85,8 @@ def get_radial_weights(r_max, n_points, dz):
 line_data = np.load(args.line_data)
 phi_rz_data = np.load(args.rz_data)
 
-i_run = args.run
-i_cycle = args.cycle
-
-line_mask = (line_data['run_index'] == i_run)
-rz_mask = (phi_rz_data['run_index'] == i_run)
+line_mask = (line_data['run_index'] == args.run)
+rz_mask = (phi_rz_data['run_index'] == args.run)
 
 n_cycles = line_mask.sum()
 sigma_z = line_data['sigma_z'][line_mask]
@@ -97,14 +102,14 @@ Nr = phi_rz.shape[1]
 Nz = phi_rz.shape[2]
 
 # This is a pretty good approximation of the applied voltage
-phi_bc = phi_rz[i_cycle, -1, -1] + phi_rz[i_cycle, -1, 0]
+phi_bc = phi_rz[args.cycle, -1, -1] + phi_rz[args.cycle, -1, 0]
 dz = z[1] - z[0]
-dt = times[i_cycle+1] - times[i_cycle]
+dt = times[args.cycle+1] - times[args.cycle]
 z0 = int(3.5e-3 / dz)
 dt_model = dt / args.dt_frac
 
 m_solver.initialize([Nr * dz, Nz * dz], [Nr, Nz], args.box_size, phi_bc)
-m_solver.set_rhs_and_sigma(rhs_rz[i_cycle], sigma_rz[i_cycle])
+m_solver.set_rhs_and_sigma(rhs_rz[args.cycle], sigma_rz[args.cycle])
 
 sigma_z_pred = np.zeros((args.nsteps+1, Nz))
 phi_z_pred = np.zeros((args.nsteps+1, Nz))
@@ -113,8 +118,8 @@ z_sigma_head = np.zeros((args.nsteps+1))
 z_Emax = np.zeros((args.nsteps+1))
 L_E = np.zeros((args.nsteps+1))
 
-sigma_z_pred[0] = sigma_z[i_cycle]
-phi_z_pred[0] = phi_z[i_cycle]
+sigma_z_pred[0] = sigma_z[args.cycle]
+phi_z_pred[0] = phi_z[args.cycle]
 sigma_head[0] = sigma_z_pred[0, z0:].max()
 i_sigma_head = np.argmax(sigma_z_pred[0, z0:]) + z0
 z_sigma_head[0] = z[i_sigma_head]
@@ -149,12 +154,12 @@ for step in range(1, args.nsteps+1):
 fig, ax = plt.subplots(4, sharex=True, layout='constrained')
 
 nsteps_data = min(args.nsteps//args.dt_frac + 1,
-                  len(sigma_z) - i_cycle)
+                  len(sigma_z) - args.cycle)
 
 for i in range(nsteps_data):
-    ax[0].plot(z, sigma_z[i_cycle+i], c='gray')
-    ax[1].plot(z, phi_z[i_cycle+i], c='gray')
-    ax[2].plot(z, -np.gradient(phi_z[i_cycle+i], dz), c='gray')
+    ax[0].plot(z, sigma_z[args.cycle+i], c='gray')
+    ax[1].plot(z, phi_z[args.cycle+i], c='gray')
+    ax[2].plot(z, -np.gradient(phi_z[args.cycle+i], dz), c='gray')
 
 for step in range(0, args.nsteps+1, args.dt_frac):
     ax[0].plot(z, sigma_z_pred[step], ls='--')
@@ -169,9 +174,9 @@ ax[3].plot(z_Emax[:-1], L_E[:-1], label='model')
 
 # Compare with data
 L_E_data = [get_high_field_length(phi, dz, 5.2e6)
-            for phi in phi_z[i_cycle:i_cycle+nsteps_data]]
+            for phi in phi_z[args.cycle:args.cycle+nsteps_data]]
 i_z_head_data = [np.argmax(np.abs(np.gradient(phi, dz)))
-                 for phi in phi_z[i_cycle:i_cycle+nsteps_data]]
+                 for phi in phi_z[args.cycle:args.cycle+nsteps_data]]
 z_head_data = [z[i] for i in i_z_head_data]
 ax[3].plot(z_head_data, L_E_data, label='data')
 ax[3].set_ylabel('length(E)')
