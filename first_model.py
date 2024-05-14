@@ -24,6 +24,8 @@ parser.add_argument('line_data', type=str,
                     help='Input numpy file with line data')
 parser.add_argument('rz_data', type=str,
                     help='Input numpy file with 2D data')
+parser.add_argument('-siloname', type=str, default='simulation',
+                    help='Base filename for output Silo files')
 args = parser.parse_args()
 
 
@@ -145,7 +147,7 @@ for step in range(1, args.nsteps+1):
     w_r = get_radial_weights(R, 20, dz)
     m_solver.update_sigma(z[0], z[-1], sigma_z_diff, R, w_r)
     m_solver.solve(dt_model)
-    m_solver.write_solution(f'test_{step:04d}')
+    m_solver.write_solution(f'{args.siloname}_{step:04d}')
     z_phi, phi = m_solver.get_line_potential(z[0], z[-1], len(z))
 
     phi_z_pred[step] = phi
