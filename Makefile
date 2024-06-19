@@ -17,3 +17,5 @@ clean:
 	$(RM) *.so *.o *.mod
 
 m_solver.o: m_solver_lib.o
+test_poisson_solver: m_solver.o m_solver_lib.o
+

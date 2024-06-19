@@ -28,6 +28,15 @@ contains
 
     call af_set_cc_methods(tree, tree%mg_i_eps, af_bc_neumann_zero)
 
+    if (rod_radius > 0) then
+       call af_add_cc_variable(tree, "lsf", ix=i_lsf)
+
+       mg%lsf_boundary_value = 0.0_dp ! Electrode is grounded
+       mg%lsf => rod_lsf
+       tree%mg_i_lsf = i_lsf
+       call af_set_cc_methods(tree, i_lsf, funcval=set_lsf_box)
+    end if
+
     call af_init(tree, box_size, domain_len, &
          [box_size, box_size], coord=af_cyl, &
          mem_limit_gb=0.1_dp)
@@ -39,8 +48,16 @@ contains
     ! Create a copy of the operator but without the variable coefficient
     mg_lpl = mg
     mg_lpl%operator_mask = mg_normal_box + mg_lsf_box
-
   end subroutine initialize
+
+  subroutine set_rod_electrode(r0, r1, radius)
+    real(dp), intent(in) :: r0(2), r1(2), radius
+
+    if (allocated(tree%boxes)) error stop "Set electrode before initialization"
+    rod_r0 = r0
+    rod_r1 = r1
+    rod_radius = radius
+  end subroutine set_rod_electrode
 
   subroutine set_rhs_and_sigma(Nr, Nz, rhs, sigma)
     integer, intent(in) :: Nr, Nz

@@ -12,7 +12,11 @@ module m_solver_lib
   real(dp)   :: phi_bc
   integer    :: i_sigma
   integer    :: i_dsigma
+  integer    :: i_lsf
   integer    :: uniform_grid_size(2)
+
+  ! Electrode parameters
+  real(dp) :: rod_r0(2), rod_r1(2), rod_radius = 0.0_dp
 
   real(dp), allocatable :: rhs_input(:, :), sigma_input(:, :)
 
@@ -110,5 +114,34 @@ contains
        frac = frac / line_len2
     end if
   end subroutine dist_vec_line
+
+  ! Level set function for rod electrode
+  real(dp) function rod_lsf(r)
+    real(dp), intent(in) :: r(2)
+    rod_lsf = dist_line(r, rod_r0, rod_r1, 2) - rod_radius
+  end function rod_lsf
+
+  subroutine set_lsf_box(box, iv)
+    type(box_t), intent(inout) :: box
+    integer, intent(in)        :: iv
+    integer                    :: i, j, nc
+    real(dp)                   :: rr(2)
+
+    nc = box%n_cell
+    do j = 0, nc+1
+       do i = 0, nc+1
+          rr = af_r_cc(box, [i, j])
+          box%cc(i, j, iv) = rod_lsf(rr)
+       end do
+    end do
+  end subroutine set_lsf_box
+
+  function dist_line(r, r0, r1, n_dim) result(dist)
+    integer, intent(in)  :: n_dim
+    real(dp), intent(in) :: r(n_dim), r0(n_dim), r1(n_dim)
+    real(dp)             :: dist, dist_vec(n_dim), frac
+    call dist_vec_line(r, r0, r1, n_dim, dist_vec, frac)
+    dist = norm2(dist_vec)
+  end function dist_line
 
 end module m_solver_lib
