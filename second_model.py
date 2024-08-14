@@ -41,9 +41,9 @@ def get_high_field_length(phi, dz):
 
 def sigma_func(x, x_head, sigma_head, radius, slope_behind):
     # Scale coordinate
-    xs = (x - x_head)
+    xs = (x - x_head + radius)
     cond = [xs < 0, xs < radius, xs >= radius]
-    values = [sigma_head * np.clip(1 + (x-x_head) *
+    values = [sigma_head * np.clip(1 + (x-x_head+radius) *
                                    slope_behind/sigma_head, 0., 1.),
               sigma_head * (1 - (xs/radius)**3),
               np.zeros_like(xs)]
@@ -108,8 +108,8 @@ z_phi, phi = m_solver.get_line_potential(z[0], z[-1], len(z))
 
 phi_z_pred[0] = phi
 sigma_z_pred[0] = sigma_z
-# i_head = np.argmax(np.abs(np.gradient(phi)))
-i_head = np.argmax(np.abs(sigma_z_pred[0]))
+i_head = np.argmax(np.abs(np.gradient(phi)))
+# i_head = np.argmax(np.abs(sigma_z_pred[0]))
 sigma_head[0] = sigma_z_pred[0].max()
 z_head[0] = z[i_head]
 
@@ -121,17 +121,19 @@ for step in range(1, args.nsteps+1):
     dsigma_dt = get_dsigma_dt(L_E[step-1])
     v = get_velocity(sigma_head[step-1])
     R = get_radius(sigma_head[step-1])
-    # slope = dsigma_dt/v
 
     sigma_head[step] = sigma_head[step-1] + dsigma_dt * dt_model
     z_head[step] = z_head[step-1] + v*dt_model
 
-    # Determine slope between new z_head and z_head - 2 * R
-    i_z = np.argmax(z > z_head[step] - 2 * R)
-    slope = (sigma_head[step] - sigma_z_pred[step-1][i_z]) / (2 * R)
+    # Determine slope in sigma behind maximum
+    dbehind = v*dt_model + R
+    i_z = np.argmax(z > z_head[step] - dbehind)
+
+    # Maximum in sigma lies R behind z_head
+    slope = (sigma_head[step] - sigma_z_pred[step-1][i_z]) / (dbehind - R)
 
     new_sigma_z = sigma_func(z, z_head[step], sigma_head[step], R, slope)
-    sigma_z_pred[step] = np.where(z > z_head[step] - 2 * R,
+    sigma_z_pred[step] = np.where(z > z_head[step]-dbehind,
                                   new_sigma_z, sigma_z_pred[step-1])
 
     w_r = get_radial_weights(R, 20, dz)
@@ -179,7 +181,7 @@ if args.plot:
 
     # Compare with data
     L_E_data = [get_high_field_length(phi, dz) for phi in phiz_data]
-    i_head_data = [np.argmax(sigma) for sigma in sigmaz_data]
+    i_head_data = [np.argmax(np.abs(np.gradient(phi))) for phi in phiz_data]
     z_head_data = [z[i] for i in i_head_data]
 
     ax[3].plot(z_head_data, L_E_data, label='data')
