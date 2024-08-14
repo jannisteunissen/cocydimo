@@ -39,7 +39,7 @@ contains
 
     call af_init(tree, box_size, domain_len, &
          [box_size, box_size, box_size], coord=af_xyz, &
-         mem_limit_gb=1.0_dp)
+         mem_limit_gb=2.0_dp)
 
     call af_refine_up_to_lvl(tree, max_lvl)
 
@@ -109,7 +109,7 @@ contains
                    call dist_vec_line(r, r0, r1, 3, dist_vec, frac)
 
                    if (frac > 0.0_dp .and. frac < 1.0_dp .and. &
-                        dist_vec(1) <= r_max) then
+                        norm2(dist_vec) <= r_max) then
                       ! Linearly interpolate dsigma
                       wz_lo = frac * (n_z - 1) + 1
                       iz_lo = floor(wz_lo)
@@ -120,11 +120,13 @@ contains
                       ir_lo = floor(wr_lo)
                       wr_lo = 1 - (wr_lo - ir_lo)
 
-                      tree%boxes(id)%cc(i, j, k, i_dsigma) = &
-                           (wz_lo * dsigma(iz_lo) + &
-                           (1 - wz_lo) * dsigma(iz_lo+1)) * &
-                           (wr_lo * radial_weight(ir_lo) + (1 - wr_lo) * &
-                           radial_weight(ir_lo+1))
+                      if (tree%boxes(id)%cc(i, j, k, i_lsf) > 0) then
+                         tree%boxes(id)%cc(i, j, k, i_dsigma) = &
+                              (wz_lo * dsigma(iz_lo) + &
+                              (1 - wz_lo) * dsigma(iz_lo+1)) * &
+                              (wr_lo * radial_weight(ir_lo) + (1 - wr_lo) * &
+                              radial_weight(ir_lo+1))
+                      end if
                    end if
                 end do
              end do
@@ -180,7 +182,7 @@ contains
     prev_residu = huge(1.0_dp)
 
     do mg_iter = 1, max_iterations
-       call mg_fas_fmg(tree, mg, set_residual=.true., have_guess=(mg_iter > 1))
+       call mg_fas_fmg(tree, mg, set_residual=.true., have_guess=.true.)
        call af_tree_maxabs_cc(tree, mg%i_tmp, residu)
        if (residu > 0.5 * prev_residu) exit
        prev_residu = residu
