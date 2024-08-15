@@ -82,21 +82,18 @@ contains
   end subroutine set_rhs_and_sigma
 
   ! Update sigma (conductivity)
-  subroutine update_sigma(r0, r1, n_z, dsigma, r_max, n_r, radial_weight)
+  subroutine update_sigma(r0, r1, sigma0, sigma1, radius0, radius1, first_step)
     real(dp), intent(in) :: r0(3), r1(3)
-    integer, intent(in)  :: n_z
-    real(dp), intent(in) :: dsigma(n_z)
-    real(dp), intent(in) :: r_max
-    integer, intent(in)  :: n_r
-    real(dp), intent(in) :: radial_weight(n_r)
+    real(dp), intent(in) :: sigma0, sigma1
+    real(dp), intent(in) :: radius0, radius1
+    logical, intent(in)  :: first_step
     integer              :: lvl, n, id, i, j, k, nc
-    real(dp)             :: r(3), dist_vec(3), frac, wz_lo, wr_lo
-    integer              :: iz_lo, ir_lo
+    real(dp)             :: r(3), dist_vec(3), dist_line, frac, tmp
+    real(dp), parameter  :: pi = acos(-1.0_dp)
 
     nc = tree%n_cell
 
-    !$omp parallel private(lvl, n, id, i, j, k, r, dist_vec, frac, &
-    !$omp &wz_lo, wr_lo, iz_lo, ir_lo)
+    !$omp parallel private(lvl, n, id, i, j, k, r, dist_vec, dist_line, frac, tmp)
     do lvl = 1, tree%highest_lvl
        !$omp do
        do n = 1, size(tree%lvls(lvl)%leaves)
@@ -105,28 +102,23 @@ contains
           do k = 1, nc
              do j = 1, nc
                 do i = 1, nc
+                   tree%boxes(id)%cc(i, j, k, i_dsigma) = 0.0_dp
+
+                   if (tree%boxes(id)%cc(i, j, k, i_lsf) <= 0.0_dp) cycle
+
                    r = af_r_cc(tree%boxes(id), [i, j, k])
-                   call dist_vec_line(r, r0, r1, 3, dist_vec, frac)
+                   call dist_vec_line(r, r0, r1, 3, dist_vec, dist_line, frac)
 
-                   if (frac > 0.0_dp .and. frac < 1.0_dp .and. &
-                        norm2(dist_vec) <= r_max) then
-                      ! Linearly interpolate dsigma
-                      wz_lo = frac * (n_z - 1) + 1
-                      iz_lo = floor(wz_lo)
-                      wz_lo = 1 - (wz_lo - iz_lo)
+                   if (norm2(dist_vec) <= radius1 .and. norm2(r0 - r) > radius0 &
+                        .and. (frac > 0 .or. first_step)) then
+                      tmp = dist_line/radius1
+                      tmp = max(0.0_dp, 1 - 3*tmp**2 + 2*tmp**3)
+                      ! Normalize so that integral of 2 * pi * r * f(r) from 0
+                      ! to R is unity
+                      tmp = tmp * 10 / (3 * pi * radius1**2)
 
-                      ! Linearly interpolate radial_weight
-                      wr_lo = norm2(dist_vec)/r_max * (n_r - 1) + 1
-                      ir_lo = floor(wr_lo)
-                      wr_lo = 1 - (wr_lo - ir_lo)
-
-                      if (tree%boxes(id)%cc(i, j, k, i_lsf) > 0) then
-                         tree%boxes(id)%cc(i, j, k, i_dsigma) = &
-                              (wz_lo * dsigma(iz_lo) + &
-                              (1 - wz_lo) * dsigma(iz_lo+1)) * &
-                              (wr_lo * radial_weight(ir_lo) + (1 - wr_lo) * &
-                              radial_weight(ir_lo+1))
-                      end if
+                      tree%boxes(id)%cc(i, j, k, i_dsigma) = &
+                           (frac * sigma1 + (1-frac) * sigma0) * tmp
                    end if
                 end do
              end do
