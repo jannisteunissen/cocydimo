@@ -74,12 +74,12 @@ def get_radial_weights(r_max, n_points, dz):
 def map_cyl_to_3d(cyl_data, r_grid):
     Nx = Ny = cyl_data.shape[0]
     Nz = cyl_data.shape[1]
-    xyz_data = np.zeros([Nx//2, Ny//2, Nz//2])
+    xyz_data = np.zeros([Nx//1, Ny//1, Nz//1])
 
     # # Assume even-sized array, cut half off
-    # r_grid = r_grid[:r_grid.size//2]
-    # cyl_data = cyl_data[:cyl_data.size//2]
-    # i_center = r_grid.size//2
+    # r_grid = r_grid[:r_grid.size//1]
+    # cyl_data = cyl_data[:cyl_data.size//1]
+    # i_center = r_grid.size//1
     # r_center = 0.5 * (r_grid[i_center-1] + r_grid[i_center])
     # r_xy = np.meshgrid(np.abs(r_grid-r_center), np.abs(r_grid-r_center))
     # rr = (r_xy[0]**2 + r_xy[1]**2)**0.5
@@ -100,28 +100,19 @@ with h5py.File(args.h5file, 'r') as h5f:
     z_grid = np.array(h5f[f'run_{args.run}/z_grid'])
 
 n_cycles = len(times)
-Nr, Nz = rhs.shape
+Nx, Ny, Nz = 256, 256, 256
+domain_size = [20e-3, 20e-3, 20e-3]
+Lx = domain_size[0]
 
-dz = z_grid[1] - z_grid[0]
-dr = r_grid[1] - r_grid[0]
 dt = times[1] - times[0]
 dt_model = dt / args.dt_frac
 
-Lx = Nr * dr
-domain_size = [Lx, Lx, Nz * dz]
-rhs_3d = map_cyl_to_3d(rhs, r_grid)
-sigma_3d = map_cyl_to_3d(sigma, r_grid)
-
-sigma_z_pred = np.zeros((args.nsteps+1, Nz))
-phi_z_pred = np.zeros((args.nsteps+1, Nz))
-sigma_head = np.zeros((args.nsteps+1))
-r_head = np.zeros((args.nsteps+1, 3))
-radius_head = np.zeros((args.nsteps+1))
-L_E = np.zeros((args.nsteps+1))
+rhs_3d = np.zeros((Nx, Ny, Nz))
+sigma_3d = np.zeros((Nx, Ny, Nz))
 
 m_solver_3d.set_rod_electrode([0.5*Lx, 0.5*Lx, 0.0],
                               [0.5*Lx, 0.5*Lx, 0.15*domain_size[2]], 0.5e-3)
-m_solver_3d.initialize(domain_size, [Nr//2, Nr//2, Nz//2], args.box_size, phi_bc)
+m_solver_3d.initialize(domain_size, [Nx, Ny, Nz], args.box_size, phi_bc)
 m_solver_3d.set_rhs_and_sigma(rhs_3d, sigma_3d)
 
 # Compute initial solution
@@ -130,94 +121,46 @@ m_solver_3d.write_solution(f'{args.siloname}_{0:04d}')
 z_phi, phi = m_solver_3d.get_line_potential([0.5*Lx, 0.5*Lx, z[0]],
                                             [0.5*Lx, 0.5*Lx, z[-1]], len(z))
 
-phi_z_pred[0] = phi
-sigma_z_pred[0] = 0.0 #sigma_z
-i_head = np.argmax(np.abs(np.gradient(phi)))
-# i_head = np.argmax(np.abs(sigma_z))
-sigma_head[0] = sigma_z.max()
-r_head[0] = [0.5*Lx, 0.5*Lx, z[i_head]]
-radius_head[0] = 0.0
-print(r_head[0])
+n_streamers = 2
+sigma_heads = np.zeros(2)
+sigma_heads[:] = [sigma_z.max(), sigma_z.max()]
+sigma_heads_prev = sigma_heads.copy()
 
+i_head = np.argmax(np.abs(np.gradient(phi)))
+r_heads = np.zeros((n_streamers, 3))
+r_heads[:, :] = [[0.5*Lx, 0.5*Lx, 3.5e-3], [0.55*Lx, 0.5*Lx, 3.5e-3]]
+r_heads_prev = r_heads.copy()
+
+v_heads = np.zeros((n_streamers, 3))
+v_heads[:, :] = [[0., 0., 1e6], [0., 0., 1e6]]
+v_heads_prev = v_heads.copy()
+
+radius_heads = np.zeros(2)
+radius_heads_prev = radius_heads.copy()
 
 for step in range(1, args.nsteps+1):
-    # Get input features for model
-    # L_E[step-1] = get_high_field_length(phi_z_pred[step-1], dz)
 
-    # dsigma_dt = get_dsigma_dt(L_E[step-1])
-    # v = get_velocity(sigma_head[step-1])
-    # R = get_radius(sigma_head[step-1])
+    for i in range(n_streamers):
+        # Get location ahead of streamer
+        r_ahead = r_heads_prev[i] + 1.5*radius_heads_prev[i] * \
+            v_heads_prev[i]/np.linalg.norm(v_heads_prev[i])
 
-    dsigma_dt = 0
-    v = 1e6
-    radius_head[step] = 5.0e-4 + step * 1e-4
+        # Get electric field unit vector
+        E_vec = m_solver_3d.get_electric_field(r_ahead)
+        E_hat = E_vec / np.linalg.norm(E_vec)
 
-    sigma_head[step] = sigma_head[step-1] + dsigma_dt * dt_model
-    r_head[step] = r_head[step-1] + np.array([0., 0., v]) * dt_model
-    print(sigma_head[step], radius_head[step], r_head[step])
+        v_heads[i] = 1e6 * E_hat
+        r_heads[i] = r_heads_prev[i] + v_heads[i] * dt_model
+        radius_heads[i] = 0.5e-3
+        sigma_heads[i] = sigma_heads_prev[i]
 
-    # # Determine slope in sigma behind maximum
-    # dbehind = v*dt_model + R
-    # i_z = np.argmax(z > z_head[step] - dbehind)
-
-    # # Maximum in sigma lies R behind z_head
-    # slope = (sigma_head[step] - sigma_z_pred[step-1][i_z]) / (dbehind - R)
-
-    # new_sigma_z = sigma_func(z, z_head[step], sigma_head[step], R, slope)
-    # sigma_z_pred[step] = np.where(z > z_head[step]-dbehind,
-    #                               new_sigma_z, sigma_z_pred[step-1])
-
-    m_solver_3d.update_sigma(r_head[step-1], r_head[step], sigma_head[step-1],
-                             sigma_head[step], radius_head[step-1],
-                             radius_head[step], step == 1)
-    m_solver_3d.write_solution(f'{args.siloname}_tmp_{step:04d}')
+    m_solver_3d.update_sigma(r_heads_prev, r_heads,
+                             sigma_heads_prev, sigma_heads,
+                             radius_heads_prev, radius_heads, step == 1)
     m_solver_3d.solve(dt_model)
-    # z_phi, phi = m_solver_3d.get_line_potential([0.5*Lx, 0.5*Lx, z[0]],
-    #                                             [0.5*Lx, 0.5*Lx, z[-1]], len(z))
-    phi_z_pred[step] = phi
-
     m_solver_3d.write_solution(f'{args.siloname}_{step:04d}')
 
-
-# if args.plot:
-#     fig, ax = plt.subplots(4, sharex=True, layout='constrained')
-
-#     nsteps_data = min(args.nsteps//args.dt_frac + 1,
-#                       n_cycles - args.cycle)
-
-#     with h5py.File(args.h5file, 'r') as h5f:
-#         sigmaz_data = []
-#         phiz_data = []
-
-#         for i in range(args.cycle, args.cycle+nsteps_data):
-#             tmp = np.array(h5f[f'run_{args.run}/sigmaz_{i}'])
-#             ax[0].plot(z, tmp, c='gray')
-#             sigmaz_data.append(tmp)
-
-#             tmp = np.array(h5f[f'run_{args.run}/phiz_{i}'])
-#             ax[1].plot(z, tmp, c='gray')
-#             ax[2].plot(z, -np.gradient(tmp, dz), c='gray')
-#             phiz_data.append(tmp)
-
-#     for step in range(0, args.nsteps+1, args.dt_frac):
-#         ax[0].plot(z, sigma_z_pred[step], ls='--')
-#         ax[1].plot(z, phi_z_pred[step], ls='--')
-#         ax[2].plot(z, -np.gradient(phi_z_pred[step], dz), ls='--')
-
-#     ax[0].set_ylabel('sigma')
-#     ax[1].set_ylabel('phi (V)')
-#     ax[2].set_ylabel('max(E)')
-
-#     ax[3].plot(z_head[:-1], L_E[:-1], label='model')
-
-#     # Compare with data
-#     L_E_data = [get_high_field_length(phi, dz) for phi in phiz_data]
-#     i_head_data = [np.argmax(np.abs(np.gradient(phi))) for phi in phiz_data]
-#     z_head_data = [z[i] for i in i_head_data]
-
-#     ax[3].plot(z_head_data, L_E_data, label='data')
-#     ax[3].set_ylabel('length(E)')
-#     ax[3].legend()
-#     ax[-1].set_xlabel('z (m)')
-
-#     plt.show()
+    radius_heads_prev = radius_heads.copy()
+    r_heads_prev = r_heads.copy()
+    v_heads_prev = v_heads.copy()
+    sigma_heads_prev = sigma_heads.copy()

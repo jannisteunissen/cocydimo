@@ -25,8 +25,11 @@ contains
     call af_add_cc_variable(tree, "eps", ix=tree%mg_i_eps)
     call af_add_cc_variable(tree, "sigma", ix=i_sigma)
     call af_add_cc_variable(tree, "dsigma", ix=i_dsigma)
+    call af_add_cc_variable(tree, "E_norm", ix=i_E_norm)
+    call af_add_fc_variable(tree, "E_vec", ix=i_E_vec)
 
     call af_set_cc_methods(tree, tree%mg_i_eps, af_bc_neumann_zero)
+    call af_set_cc_methods(tree, i_E_norm, af_bc_neumann_zero)
 
     if (rod_radius > 0) then
        call af_add_cc_variable(tree, "lsf", ix=i_lsf)
@@ -82,18 +85,20 @@ contains
   end subroutine set_rhs_and_sigma
 
   ! Update sigma (conductivity)
-  subroutine update_sigma(r0, r1, sigma0, sigma1, radius0, radius1, first_step)
-    real(dp), intent(in) :: r0(3), r1(3)
-    real(dp), intent(in) :: sigma0, sigma1
-    real(dp), intent(in) :: radius0, radius1
+  subroutine update_sigma(n_streamers, r0, r1, sigma0, sigma1, radius0, radius1, &
+       first_step)
+    integer, intent(in)  :: n_streamers
+    real(dp), intent(in) :: r0(n_streamers, 3), r1(n_streamers, 3)
+    real(dp), intent(in) :: sigma0(n_streamers), sigma1(n_streamers)
+    real(dp), intent(in) :: radius0(n_streamers), radius1(n_streamers)
     logical, intent(in)  :: first_step
-    integer              :: lvl, n, id, i, j, k, nc
+    integer              :: lvl, n, id, i, j, k, nc, ix
     real(dp)             :: r(3), dist_vec(3), dist_line, frac, tmp
     real(dp), parameter  :: pi = acos(-1.0_dp)
 
     nc = tree%n_cell
 
-    !$omp parallel private(lvl, n, id, i, j, k, r, dist_vec, dist_line, frac, tmp)
+    !$omp parallel private(lvl, n, id, i, j, k, r, dist_vec, dist_line, frac, tmp, ix)
     do lvl = 1, tree%highest_lvl
        !$omp do
        do n = 1, size(tree%lvls(lvl)%leaves)
@@ -104,22 +109,30 @@ contains
                 do i = 1, nc
                    tree%boxes(id)%cc(i, j, k, i_dsigma) = 0.0_dp
 
-                   if (tree%boxes(id)%cc(i, j, k, i_lsf) <= 0.0_dp) cycle
+                   if (tree%boxes(id)%cc(i, j, k, i_lsf) < 0.0_dp) cycle
 
                    r = af_r_cc(tree%boxes(id), [i, j, k])
-                   call dist_vec_line(r, r0, r1, 3, dist_vec, dist_line, frac)
 
-                   if (norm2(dist_vec) <= radius1 .and. norm2(r0 - r) > radius0 &
-                        .and. (frac > 0 .or. first_step)) then
-                      tmp = dist_line/radius1
-                      tmp = max(0.0_dp, 1 - 3*tmp**2 + 2*tmp**3)
-                      ! Normalize so that integral of 2 * pi * r * f(r) from 0
-                      ! to R is unity
-                      tmp = tmp * 10 / (3 * pi * radius1**2)
+                   do ix = 1, n_streamers
+                      call dist_vec_line(r, r0(ix, :), r1(ix, :), &
+                           3, dist_vec, dist_line, frac)
 
-                      tree%boxes(id)%cc(i, j, k, i_dsigma) = &
-                           (frac * sigma1 + (1-frac) * sigma0) * tmp
-                   end if
+                      ! Exclude semi-sphere of previous point
+                      if (norm2(dist_vec) <= radius1(ix) .and. &
+                           norm2(r0(ix, :) - r) > radius0(ix) .and. &
+                           (frac > 0 .or. first_step)) then
+                         ! Determine radial profile
+                         tmp = dist_line/radius1(ix)
+                         tmp = max(0.0_dp, 1 - 3*tmp**2 + 2*tmp**3)
+                         ! Normalize so that integral of 2 * pi * r * f(r) from 0
+                         ! to R is unity
+                         tmp = tmp * 10 / (3 * pi * radius1(ix)**2)
+
+                         tree%boxes(id)%cc(i, j, k, i_dsigma) = &
+                              tree%boxes(id)%cc(i, j, k, i_dsigma) + &
+                              (frac * sigma1(ix) + (1-frac) * sigma0(ix)) * tmp
+                      end if
+                   end do
                 end do
              end do
           end do
@@ -132,6 +145,16 @@ contains
     call af_tree_apply(tree, i_sigma, i_dsigma, '+')
 
   end subroutine update_sigma
+
+  ! Get the electric field vector at a location
+  subroutine get_electric_field(r, E_vec)
+    real(dp), intent(in)  :: r(3)
+    real(dp), intent(out) :: E_vec(3)
+    logical               :: success
+
+    E_vec = af_interp1_fc(tree, r, i_E_vec, success)
+    if (.not. success) error stop "Interpolation error"
+  end subroutine get_electric_field
 
   ! Get the potential along a line
   subroutine get_line_potential(r0, r1, n_points, r_line, phi_line)
@@ -158,7 +181,7 @@ contains
     real(dp), intent(in)  :: dt
     integer, parameter    :: max_iterations = 100
     integer               :: mg_iter
-    real(dp)              :: residu, prev_residu
+    real(dp)              :: residu, prev_residu, max_rhs
 
     call af_loop_box_arg(tree, set_epsilon_from_sigma, [dt], leaves_only=.true.)
     call af_restrict_tree(tree, [tree%mg_i_eps])
@@ -171,12 +194,13 @@ contains
        call mg_update_operator_stencil(tree, mg)
     end if
 
+    call af_tree_maxabs_cc(tree, mg%i_rhs, max_rhs)
     prev_residu = huge(1.0_dp)
 
     do mg_iter = 1, max_iterations
        call mg_fas_fmg(tree, mg, set_residual=.true., have_guess=.true.)
        call af_tree_maxabs_cc(tree, mg%i_tmp, residu)
-       if (residu > 0.5 * prev_residu) exit
+       if (residu < 1e-5_dp * max_rhs .or. residu > 0.5 * prev_residu) exit
        prev_residu = residu
     end do
 
@@ -184,6 +208,10 @@ contains
 
     ! Compute new rhs
     call compute_rhs(tree, mg_lpl)
+
+    ! Compute electric field
+    call mg_compute_phi_gradient(tree, mg, i_E_vec, -1.0_dp, i_E_norm)
+    call af_gc_tree(tree, [i_E_norm])
 
   end subroutine solve
 

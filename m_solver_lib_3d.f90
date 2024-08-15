@@ -13,6 +13,8 @@ module m_solver_lib_3d
   integer    :: i_sigma
   integer    :: i_dsigma
   integer    :: i_lsf
+  integer    :: i_E_norm
+  integer    :: i_E_vec
   integer    :: uniform_grid_size(3)
 
   ! Electrode parameters
