@@ -156,6 +156,18 @@ contains
     if (.not. success) error stop "Interpolation error"
   end subroutine get_electric_field
 
+  ! Get sigma at a location
+  subroutine get_sigma(r, sigma)
+    real(dp), intent(in)  :: r(3)
+    real(dp), intent(out) :: sigma
+    real(dp)              :: tmp(1)
+    logical               :: success
+
+    tmp = af_interp1(tree, r, [i_sigma], success)
+    sigma = tmp(1)
+    if (.not. success) error stop "Interpolation error"
+  end subroutine get_sigma
+
   ! Get the potential along a line
   subroutine get_line_potential(r0, r1, n_points, r_line, phi_line)
     real(dp), intent(in)  :: r0(3)
