@@ -10,14 +10,11 @@ contains
     integer, intent(in)  :: grid_size(3)
     integer, intent(in)  :: box_size
     real(dp), intent(in) :: applied_voltage
-    integer              :: max_lvl
+    integer              :: n, n_add
 
     phi_bc = applied_voltage
     uniform_grid_size = grid_size
-    max_lvl = nint(log(grid_size(1) / real(box_size, dp))/log(2.0_dp)) + 1
-
-    if (any(box_size * 2**(max_lvl-1) /= grid_size)) &
-         error stop "Incompatible grid size"
+    min_dr = minval(domain_len / uniform_grid_size)
 
     call af_add_cc_variable(tree, "phi", ix=mg%i_phi)
     call af_add_cc_variable(tree, "rhs", ix=mg%i_rhs)
@@ -36,6 +33,9 @@ contains
 
        mg%lsf_boundary_value = 0.0_dp ! Electrode is grounded
        mg%lsf => rod_lsf
+       mg%lsf_dist => mg_lsf_dist_gss
+       mg%lsf_length_scale = rod_radius
+
        tree%mg_i_lsf = i_lsf
        call af_set_cc_methods(tree, i_lsf, funcval=set_lsf_box)
     end if
@@ -44,14 +44,29 @@ contains
          [box_size, box_size, box_size], coord=af_xyz, &
          mem_limit_gb=2.0_dp)
 
-    call af_refine_up_to_lvl(tree, max_lvl)
-
     mg%sides_bc => sides_bc ! Method for boundary conditions
 
     ! Create a copy of the operator but without the variable coefficient
     mg_lpl = mg
     mg_lpl%operator_mask = mg_normal_box + mg_lsf_box
+
+    call solve(0.0_dp)
+
+    do n = 1, 10
+       call adjust_refinement(n_add)
+       if (n_add == 0) exit
+       print *, "Initial refinement, step", n
+       call solve(0.0_dp)
+    end do
+
   end subroutine initialize
+
+  subroutine adjust_refinement(n_add)
+    integer, intent(out) :: n_add
+    type(ref_info_t) :: refine_info
+    call af_adjust_refinement(tree, refinement_criterion, refine_info, 2)
+    n_add = refine_info%n_add
+  end subroutine adjust_refinement
 
   subroutine set_rod_electrode(r0, r1, radius)
     real(dp), intent(in) :: r0(3), r1(3), radius
@@ -61,28 +76,6 @@ contains
     rod_r1 = r1
     rod_radius = radius
   end subroutine set_rod_electrode
-
-  subroutine set_rhs_and_sigma(Nx, Ny, Nz, rhs, sigma)
-    integer, intent(in) :: Nx, Ny, Nz
-    real(dp), intent(in) :: rhs(Nx, Ny, Nz)
-    real(dp), intent(in) :: sigma(Nx, Ny, Nz)
-
-    if (any(shape(rhs) /= uniform_grid_size)) then
-       print *, "shape(rhs): ", shape(rhs)
-       print *, "uniform_grid_size: ", uniform_grid_size
-       error stop "rhs has wrong size"
-    end if
-    if (any(shape(sigma) /= uniform_grid_size)) then
-       print *, "shape(sigma): ", shape(sigma)
-       print *, "uniform_grid_size: ", uniform_grid_size
-       error stop "sigma has wrong size"
-    end if
-
-    rhs_input = rhs
-    sigma_input = sigma
-
-    call af_loop_box(tree, set_init_cond, leaves_only=.true.)
-  end subroutine set_rhs_and_sigma
 
   ! Update sigma (conductivity)
   subroutine update_sigma(n_streamers, r0, r1, sigma0, sigma1, radius0, radius1, &
@@ -118,9 +111,8 @@ contains
                            3, dist_vec, dist_line, frac)
 
                       ! Exclude semi-sphere of previous point
-                      if (norm2(dist_vec) <= radius1(ix) .and. &
-                           norm2(r0(ix, :) - r) > radius0(ix) .and. &
-                           (frac > 0 .or. first_step)) then
+                      if (norm2(dist_vec) <= radius1(ix) .and. (first_step .or. &
+                           (frac > 0 .and. norm2(r0(ix, :) - r) > radius0(ix)))) then
                          ! Determine radial profile
                          tmp = dist_line/radius1(ix)
                          tmp = max(0.0_dp, 1 - 3*tmp**2 + 2*tmp**3)
@@ -155,6 +147,29 @@ contains
     E_vec = af_interp1_fc(tree, r, i_E_vec, success)
     if (.not. success) error stop "Interpolation error"
   end subroutine get_electric_field
+
+  ! Trace the field from a location
+  subroutine get_head_trace(r0, v0, length, n_steps, E_vec, sigma)
+    real(dp), intent(in)  :: r0(3), v0(3), length
+    integer, intent(in)   :: n_steps
+    real(dp), intent(out) :: E_vec(3, n_steps)
+    real(dp), intent(out) :: sigma(n_steps)
+    real(dp)              :: r(3), dr(3)
+    integer               :: n
+    logical               :: success
+
+    r = r0
+    dr = length * v0 / (norm2(v0) * (n_steps - 1))
+
+    do n = 1, n_steps
+       E_vec(:, n) = af_interp1_fc(tree, r, i_E_vec, success)
+       sigma(n:n) = af_interp1(tree, r, [i_sigma], success)
+       if (.not. success) error stop "Interpolation error"
+
+       r = r + dr
+    end do
+
+  end subroutine get_head_trace
 
   ! Get sigma at a location
   subroutine get_sigma(r, sigma)
@@ -203,7 +218,7 @@ contains
        call mg_init(tree, mg)
        call mg_init(tree, mg_lpl)
     else
-       call mg_update_operator_stencil(tree, mg)
+       call mg_update_operator_stencil(tree, mg, .false., .true.)
     end if
 
     call af_tree_maxabs_cc(tree, mg%i_rhs, max_rhs)

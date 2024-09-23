@@ -172,7 +172,7 @@ contains
        call mg_init(tree, mg)
        call mg_init(tree, mg_lpl)
     else
-       call mg_update_operator_stencil(tree, mg)
+       call mg_update_operator_stencil(tree, mg, .false., .true.)
     end if
 
     prev_residu = huge(1.0_dp)

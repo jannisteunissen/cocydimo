@@ -16,36 +16,28 @@ module m_solver_lib_3d
   integer    :: i_E_norm
   integer    :: i_E_vec
   integer    :: uniform_grid_size(3)
+  real(dp)   :: min_dr
 
   ! Electrode parameters
   real(dp) :: rod_r0(3), rod_r1(3), rod_radius = 0.0_dp
 
-  real(dp), allocatable :: rhs_input(:, :, :), sigma_input(:, :, :)
-
 contains
 
-  ! This routine sets the initial conditions for each box
-  subroutine set_init_cond(box)
-    type(box_t), intent(inout) :: box
-    integer                    :: i, j, k, nc, ix_offset(3), k1, k2, k3
+  subroutine refinement_criterion(box, cell_flags)
+    type(box_t), intent(in) :: box
+    integer, intent(out)    :: cell_flags(box%n_cell, box%n_cell, box%n_cell)
+    integer                 :: nc
 
     nc = box%n_cell
-    box%cc(:, :, :, mg%i_phi) = 0
-    ix_offset = (box%ix - 1) * nc
 
-    do k = 1, nc
-       do j = 1, nc
-          do i = 1, nc
-             k1 = ix_offset(1) + i
-             k2 = ix_offset(2) + j
-             k3 = ix_offset(3) + k
-
-             box%cc(i, j, k, i_sigma)  = sigma_input(k1, k2, k3)
-             box%cc(i, j, k, mg%i_rhs) = rhs_input(k1, k2, k3)
-          end do
-       end do
-    end do
-  end subroutine set_init_cond
+    if (minval(box%dr) > 1.9_dp * min_dr .and. ( &
+         maxval(abs(box%cc(1:nc, 1:nc, 1:nc, mg%i_eps) - 1)) > 1e-6_dp .or. &
+         iand(box%tag, mg_lsf_box) > 0)) then
+        cell_flags = af_do_ref
+    else
+       cell_flags = af_keep_ref
+    end if
+  end subroutine refinement_criterion
 
   subroutine set_epsilon_from_sigma(box, dt_vec)
     type(box_t), intent(inout) :: box

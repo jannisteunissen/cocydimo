@@ -22,7 +22,7 @@ parser.add_argument('-dt', type=float, default=2e-10,
                     help='Time step (s)')
 parser.add_argument('-phi_bc', type=float, default=-4e4,
                     help='Applied potential (V)')
-parser.add_argument('-box_size', type=int, default=32,
+parser.add_argument('-box_size', type=int, default=8,
                     help='Size of boxes in afivo')
 parser.add_argument('-siloname', type=str, default='output/simulation_3d',
                     help='Base filename for output Silo files')
@@ -56,13 +56,9 @@ Lx = 20e-3
 domain_size = [Lx, Lx, Lx]
 phi_bc = -4e4
 
-rhs_3d = np.zeros((Nx, Ny, Nz))
-sigma_3d = np.zeros((Nx, Ny, Nz))
-
 m_solver_3d.set_rod_electrode([0.5*Lx, 0.5*Lx, 0.0],
                               [0.5*Lx, 0.5*Lx, 0.15*Lx], 0.5e-3)
 m_solver_3d.initialize(domain_size, [Nx, Ny, Nz], args.box_size, phi_bc)
-m_solver_3d.set_rhs_and_sigma(rhs_3d, sigma_3d)
 
 # Compute initial solution
 m_solver_3d.solve(0.0)
@@ -110,15 +106,15 @@ def update_sigma(streamers_t1, streamers_t0, first_step):
 
 streamers = [Streamer([0.5*Lx, 0.5*Lx, 3.5e-3],
                       [0., 0., 1e6],
-                      0.5e-3, 1e-6),
-             Streamer([0.55*Lx, 0.5*Lx, 6.5e-3],
-                      [0., 0., 1e6],
                       0.5e-3, 1e-6)]
+             # Streamer([0.6*Lx, 0.5*Lx, 6.5e-3],
+             #          [0., 0., 1e6],
+             #          0.5e-3, 1e-6)]
 
 
 for step in range(1, args.nsteps+1):
 
-    if step == 4:
+    if step == 8 or step == 20:
         streamers[0].is_branching = True
         streamers.append(copy.copy(streamers[0]))
         streamers[0].branching_angle = 30/180. * np.pi
@@ -127,30 +123,33 @@ for step in range(1, args.nsteps+1):
     streamers_prev = copy.deepcopy(streamers)
 
     for s in streamers:
-        # Get location ahead of streamer
-        r_ahead = s.r + 1.5*s.R * s.v/norm(s.v)
+        # Get samples of the electric field and sigma in the direction of the
+        # previous streamer velocity
+        E_trace, sigma = m_solver_3d.get_head_trace(s.r, s.v, 2*s.R, 5)
 
-        # Get electric field unit vector
-        E_vec = m_solver_3d.get_electric_field(r_ahead)
-        E_hat = E_vec / np.linalg.norm(E_vec)
+        # Take the field at the farthest sample. This field will tend to bend
+        # towards the background electric field.
+        E_hat = E_trace[:, -1]
+        E_hat = E_hat / norm(E_hat)
 
         if s.is_branching:
             rot = Rotation.from_euler('y', s.branching_angle)
             E_hat = rot.apply(E_hat)
             s.is_branching = False
-        else:
-            # Get sigma at new location to detect streamer encounters
-            sigma_ahead = m_solver_3d.get_sigma(r_ahead)
-            if sigma_ahead > 0:
-                s.keep = False
+        elif sigma.min() > 0.2 * sigma.max():
+            # No dip in sigma ahead of the channel, so a streamer encounter
+            s.keep = False
 
         s.v = 1e6 * E_hat
         s.r = s.r + s.v * args.dt
         s.R = 0.5e-3
         s.sigma = s.sigma
 
+    n_add = m_solver_3d.adjust_refinement()
     update_sigma(streamers, streamers_prev, step == 1)
     m_solver_3d.solve(args.dt)
     m_solver_3d.write_solution(f'{args.siloname}_{step:04d}')
 
     streamers = [s for s in streamers if s.keep]
+    if len(streamers) == 0:
+        raise ValueError('All streamers gone')
