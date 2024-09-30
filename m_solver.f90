@@ -25,8 +25,11 @@ contains
     call af_add_cc_variable(tree, "eps", ix=tree%mg_i_eps)
     call af_add_cc_variable(tree, "sigma", ix=i_sigma)
     call af_add_cc_variable(tree, "dsigma", ix=i_dsigma)
+    call af_add_cc_variable(tree, "E_norm", ix=i_E_norm)
+    call af_add_fc_variable(tree, "E_vec", ix=i_E_vec)
 
     call af_set_cc_methods(tree, tree%mg_i_eps, af_bc_neumann_zero)
+    call af_set_cc_methods(tree, i_E_norm, af_bc_neumann_zero)
 
     if (rod_radius > 0) then
        call af_add_cc_variable(tree, "lsf", ix=i_lsf)
@@ -91,11 +94,12 @@ contains
     real(dp), intent(in) :: radial_weight(n_r)
     integer              :: lvl, n, id, i, j, nc
     real(dp)             :: r(2), dist_vec(2), frac, wz_lo, wr_lo
+    real(dp)             :: dist_line
     integer              :: iz_lo, ir_lo
 
     nc = tree%n_cell
 
-    !$omp parallel private(lvl, n, id, i, j, r, dist_vec, frac, &
+    !$omp parallel private(lvl, n, id, i, j, r, dist_vec, dist_line, frac, &
     !$omp &wz_lo, wr_lo, iz_lo, ir_lo)
     do lvl = 1, tree%highest_lvl
        !$omp do
@@ -106,7 +110,7 @@ contains
              do i = 1, nc
                 r = af_r_cc(tree%boxes(id), [i, j])
                 call dist_vec_line(r, [0.0_dp, z_min], [0.0_dp, z_max], 2, &
-                     dist_vec, frac)
+                     dist_vec, dist_line, frac)
 
                 if (frac > 0.0_dp .and. frac < 1.0_dp .and. &
                      dist_vec(1) <= r_max) then
@@ -136,6 +140,65 @@ contains
     call af_tree_apply(tree, i_sigma, i_dsigma, '+')
 
   end subroutine update_sigma
+
+  ! Update sigma (conductivity)
+  subroutine update_sigma_new(n_streamers, r0, r1, sigma0, sigma1, radius0, radius1, &
+       first_step)
+    integer, intent(in)  :: n_streamers
+    real(dp), intent(in) :: r0(n_streamers, 2), r1(n_streamers, 2)
+    real(dp), intent(in) :: sigma0(n_streamers), sigma1(n_streamers)
+    real(dp), intent(in) :: radius0(n_streamers), radius1(n_streamers)
+    logical, intent(in)  :: first_step
+    integer              :: lvl, n, id, i, j, nc, ix
+    real(dp)             :: r(2), dist_vec(2), dist_line, frac, tmp
+    real(dp), parameter  :: pi = acos(-1.0_dp)
+
+    nc = tree%n_cell
+
+    !$omp parallel private(lvl, n, id, i, j, k, r, dist_vec, dist_line, frac, tmp, ix)
+    do lvl = 1, tree%highest_lvl
+       !$omp do
+       do n = 1, size(tree%lvls(lvl)%leaves)
+          id = tree%lvls(lvl)%leaves(n)
+
+          do j = 1, nc
+             do i = 1, nc
+                tree%boxes(id)%cc(i, j, i_dsigma) = 0.0_dp
+
+                if (tree%boxes(id)%cc(i, j, i_lsf) < 0.0_dp) cycle
+
+                r = af_r_cc(tree%boxes(id), [i, j])
+
+                do ix = 1, n_streamers
+                   call dist_vec_line(r, r0(ix, :), r1(ix, :), &
+                        2, dist_vec, dist_line, frac)
+
+                   ! Exclude semi-sphere of previous point
+                   if (norm2(dist_vec) <= radius1(ix) .and. (first_step .or. &
+                        (frac > 0 .and. norm2(r0(ix, :) - r) > radius0(ix)))) then
+                      ! Determine radial profile
+                      tmp = dist_line/radius1(ix)
+                      tmp = max(0.0_dp, 1 - 3*tmp**2 + 2*tmp**3)
+                      ! Normalize so that integral of 2 * pi * r * f(r) from 0
+                      ! to R is unity
+                      tmp = tmp * 10 / (3 * pi * radius1(ix)**2)
+
+                      tree%boxes(id)%cc(i, j, i_dsigma) = &
+                           tree%boxes(id)%cc(i, j, i_dsigma) + &
+                           (frac * sigma1(ix) + (1-frac) * sigma0(ix)) * tmp
+                   end if
+                end do
+             end do
+          end do
+       end do
+       !$omp end do
+    end do
+    !$omp end parallel
+
+    ! Add the change in sigma
+    call af_tree_apply(tree, i_sigma, i_dsigma, '+')
+
+  end subroutine update_sigma_new
 
   ! Get the potential along a line
   subroutine get_line_potential(z_min, z_max, n_points, z_line, phi_line)
@@ -188,6 +251,10 @@ contains
 
     ! Compute new rhs
     call compute_rhs(tree, mg_lpl)
+
+    ! Compute electric field
+    call mg_compute_phi_gradient(tree, mg, i_E_vec, -1.0_dp, i_E_norm)
+    call af_gc_tree(tree, [i_E_norm])
 
   end subroutine solve
 

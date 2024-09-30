@@ -11,6 +11,8 @@ module m_solver_lib
   type(mg_t) :: mg_lpl
   real(dp)   :: phi_bc
   integer    :: i_sigma
+  integer    :: i_E_norm
+  integer    :: i_E_vec
   integer    :: i_dsigma
   integer    :: i_lsf
   integer    :: uniform_grid_size(2)
@@ -93,32 +95,34 @@ contains
   end subroutine sides_bc
 
   ! Compute distance from a line
-  pure subroutine dist_vec_line(r, r0, r1, n_dim, dist_vec, frac)
+  pure subroutine dist_vec_line(r, r0, r1, n_dim, dist_vec, dist_line, frac)
     integer, intent(in)   :: n_dim
     real(dp), intent(in)  :: r(n_dim), r0(n_dim), r1(n_dim)
-    real(dp), intent(out) :: dist_vec(n_dim)
+    real(dp), intent(out) :: dist_vec(n_dim) !< Distance vector from line segment
+    real(dp), intent(out) :: dist_line !< Distance from line if it were infinite
     real(dp), intent(out) :: frac !< Fraction [0,1] along line
     real(dp)              :: line_len2
 
+    ! Distance to infinite line
     line_len2 = sum((r1 - r0)**2)
-    frac = sum((r - r0) * (r1 - r0))
+    frac = sum((r - r0) * (r1 - r0))/line_len2
+    dist_vec = r - r0 - frac * (r1 - r0)
+    dist_line = norm2(dist_vec)
 
+    ! Adjust for finite line
     if (frac <= 0.0_dp) then
        frac = 0.0_dp
        dist_vec = r - r0
-    else if (frac >= line_len2) then
+    else if (frac >= 1.0_dp) then
        frac = 1.0_dp
        dist_vec = r - r1
-    else
-       dist_vec = r - (r0 + frac/line_len2 * (r1 - r0))
-       frac = frac / line_len2
     end if
   end subroutine dist_vec_line
 
   ! Level set function for rod electrode
   real(dp) function rod_lsf(r)
     real(dp), intent(in) :: r(2)
-    rod_lsf = dist_line(r, rod_r0, rod_r1, 2) - rod_radius
+    rod_lsf = get_dist_line(r, rod_r0, rod_r1, 2) - rod_radius
   end function rod_lsf
 
   subroutine set_lsf_box(box, iv)
@@ -136,12 +140,12 @@ contains
     end do
   end subroutine set_lsf_box
 
-  function dist_line(r, r0, r1, n_dim) result(dist)
+  function get_dist_line(r, r0, r1, n_dim) result(dist)
     integer, intent(in)  :: n_dim
     real(dp), intent(in) :: r(n_dim), r0(n_dim), r1(n_dim)
-    real(dp)             :: dist, dist_vec(n_dim), frac
-    call dist_vec_line(r, r0, r1, n_dim, dist_vec, frac)
+    real(dp)             :: dist, dist_vec(n_dim), dist_line, frac
+    call dist_vec_line(r, r0, r1, n_dim, dist_vec, dist_line, frac)
     dist = norm2(dist_vec)
-  end function dist_line
+  end function get_dist_line
 
 end module m_solver_lib
