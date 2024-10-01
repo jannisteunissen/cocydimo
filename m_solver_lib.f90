@@ -3,7 +3,7 @@ module m_solver_lib
 
   implicit none
 
-  real(dp), parameter :: eps0 = 8.8541878176d-12 ! permitivity of vacuum (SI)
+  real(dp), parameter :: eps0 = 8.8541878128e-12_dp ! permitivity of vacuum (SI)
   real(dp), parameter :: pi = acos(-1.0_dp)
 
   type(af_t) :: tree
@@ -15,10 +15,17 @@ module m_solver_lib
   integer    :: i_E_vec
   integer    :: i_dsigma
   integer    :: i_lsf
+  integer    :: i_time
   integer    :: uniform_grid_size(2)
 
   ! Electrode parameters
   real(dp) :: rod_r0(2), rod_r1(2), rod_radius = 0.0_dp
+
+  ! Table with k_eff for updating channel conductivity
+  real(dp), allocatable :: k_eff_table(:)
+  integer :: k_eff_table_n_points
+  real(dp) :: k_eff_table_x_min
+  real(dp) :: k_eff_table_inv_fac
 
   real(dp), allocatable :: rhs_input(:, :), sigma_input(:, :)
 

@@ -27,8 +27,10 @@ m_solver_3d.o: libsolver_3d.a
 clean:
 	$(RM) *.so *.o *.mod *.a
 
-m_solver_lib.o: INCDIRS=$(INCDIRS_2D) LIBDIRS=$(LIBDIRS_2D)
-m_solver_lib_3d.o: INCDIRS=$(INCDIRS_3D) LIBDIRS=$(LIBDIRS_3D)
+m_solver_lib.o: INCDIRS=$(INCDIRS_2D)
+m_solver_lib.o: LIBDIRS=$(LIBDIRS_2D)
+m_solver_lib_3d.o: INCDIRS=$(INCDIRS_3D)
+m_solver_lib_3d.o: LIBDIRS=$(LIBDIRS_3D)
 
 libsolver.a: m_solver_lib.o
 	$(RM) $@

@@ -25,11 +25,14 @@ contains
     call af_add_cc_variable(tree, "eps", ix=tree%mg_i_eps)
     call af_add_cc_variable(tree, "sigma", ix=i_sigma)
     call af_add_cc_variable(tree, "dsigma", ix=i_dsigma)
+    call af_add_cc_variable(tree, "phi", ix=mg%i_phi)
     call af_add_cc_variable(tree, "E_norm", ix=i_E_norm)
+    call af_add_cc_variable(tree, "time", ix=i_time)
     call af_add_fc_variable(tree, "E_vec", ix=i_E_vec)
 
     call af_set_cc_methods(tree, tree%mg_i_eps, af_bc_neumann_zero)
     call af_set_cc_methods(tree, i_E_norm, af_bc_neumann_zero)
+    call af_set_cc_methods(tree, i_time, af_bc_neumann_zero)
 
     if (rod_radius > 0) then
        call af_add_cc_variable(tree, "lsf", ix=i_lsf)
@@ -85,52 +88,78 @@ contains
   end subroutine set_rhs_and_sigma
 
   ! Update sigma (conductivity)
-  subroutine update_sigma(z_min, z_max, n_z, dsigma, r_max, n_r, radial_weight)
-    real(dp), intent(in) :: z_min, z_max
-    integer, intent(in)  :: n_z
-    real(dp), intent(in) :: dsigma(n_z)
-    real(dp), intent(in) :: r_max
-    integer, intent(in)  :: n_r
-    real(dp), intent(in) :: radial_weight(n_r)
-    integer              :: lvl, n, id, i, j, nc
-    real(dp)             :: r(2), dist_vec(2), frac, wz_lo, wr_lo
-    real(dp)             :: dist_line
-    integer              :: iz_lo, ir_lo
+  subroutine update_sigma(n_streamers, r0, r1, sigma0, sigma1, radius0, radius1, &
+       t, dt, channel_delay, first_step)
+    integer, intent(in)  :: n_streamers
+    real(dp), intent(in) :: r0(n_streamers, 2), r1(n_streamers, 2)
+    real(dp), intent(in) :: sigma0(n_streamers), sigma1(n_streamers)
+    real(dp), intent(in) :: radius0(n_streamers), radius1(n_streamers)
+    real(dp), intent(in) :: t
+    real(dp), intent(in) :: dt
+    real(dp), intent(in) :: channel_delay
+    logical, intent(in)  :: first_step
+    integer              :: lvl, n, id, i, j, nc, ix
+    real(dp)             :: r(2), dist_vec(2), dist_line, frac, tmp
+    real(dp)             :: k_eff
+    real(dp), parameter  :: pi = acos(-1.0_dp)
+    real(dp), parameter  :: min_electrode_distance = 1e-4_dp
 
     nc = tree%n_cell
 
-    !$omp parallel private(lvl, n, id, i, j, r, dist_vec, dist_line, frac, &
-    !$omp &wz_lo, wr_lo, iz_lo, ir_lo)
+    if (.not. allocated(k_eff_table)) error stop "Call store_k_eff first"
+
+    !$omp parallel private(lvl, n, id, i, j, k, r, dist_vec, dist_line, &
+    !$omp &frac, tmp, ix, k_eff)
     do lvl = 1, tree%highest_lvl
        !$omp do
        do n = 1, size(tree%lvls(lvl)%leaves)
           id = tree%lvls(lvl)%leaves(n)
 
-          do j = 1, nc
-             do i = 1, nc
-                r = af_r_cc(tree%boxes(id), [i, j])
-                call dist_vec_line(r, [0.0_dp, z_min], [0.0_dp, z_max], 2, &
-                     dist_vec, dist_line, frac)
+          associate (box => tree%boxes(id))
+            do j = 1, nc
+               do i = 1, nc
+                  box%cc(i, j, i_dsigma) = 0.0_dp
 
-                if (frac > 0.0_dp .and. frac < 1.0_dp .and. &
-                     dist_vec(1) <= r_max) then
-                   ! Linearly interpolate
-                   wz_lo = frac * (n_z - 1) + 1
-                   iz_lo = floor(wz_lo)
-                   wz_lo = 1 - (wz_lo - iz_lo)
+                  if (box%cc(i, j, i_lsf) < 0.0_dp) cycle
 
-                   wr_lo = dist_vec(1)/r_max * (n_r - 1) + 1
-                   ir_lo = floor(wr_lo)
-                   wr_lo = 1 - (wr_lo - ir_lo)
+                  r = af_r_cc(box, [i, j])
 
-                   tree%boxes(id)%cc(i, j, i_dsigma) = &
-                        (wz_lo * dsigma(iz_lo) + &
-                        (1 - wz_lo) * dsigma(iz_lo+1)) * &
-                        (wr_lo * radial_weight(ir_lo) + (1 - wr_lo) * &
-                        radial_weight(ir_lo+1))
-                end if
-             end do
-          end do
+                  do ix = 1, n_streamers
+                     call dist_vec_line(r, r0(ix, :), r1(ix, :), &
+                          2, dist_vec, dist_line, frac)
+
+                     ! Exclude semi-sphere of previous point
+                     if (norm2(dist_vec) <= radius1(ix) .and. (first_step .or. &
+                          (frac > 0 .and. norm2(r0(ix, :) - r) > radius0(ix)))) then
+                        ! Determine radial profile
+                        tmp = dist_line/radius1(ix)
+                        tmp = max(0.0_dp, 1 - 3*tmp**2 + 2*tmp**3)
+
+                        ! Normalize so that integral of 2 * pi * r * f(r) from 0
+                        ! to R is unity
+                        tmp = tmp * 10 / (3 * pi * radius1(ix)**2)
+
+                        box%cc(i, j, i_dsigma) = box%cc(i, j, i_dsigma) + &
+                             (frac * sigma1(ix) + (1-frac) * sigma0(ix)) * tmp
+                        box%cc(i, j, i_time) = t
+                     end if
+                  end do
+
+                  ! Update channel conductivity, but only where the channel
+                  ! has already existed for some time, and away from the
+                  ! electrode surface (to avoid instabilities in high fields)
+                  if (box%cc(i, j, i_lsf) > min_electrode_distance .and. &
+                       box%cc(i, j, i_time) < t - channel_delay) then
+                     call get_k_eff(box%cc(i, j, i_E_norm), k_eff)
+
+                     ! Limit increase to a factor 2 per time step
+                     box%cc(i, j, i_dsigma) = min(2.0_dp, exp(dt * k_eff) - 1.0_dp) * &
+                          box%cc(i, j, i_sigma)
+                  end if
+
+               end do
+            end do
+          end associate
        end do
        !$omp end do
     end do
@@ -141,64 +170,44 @@ contains
 
   end subroutine update_sigma
 
-  ! Update sigma (conductivity)
-  subroutine update_sigma_new(n_streamers, r0, r1, sigma0, sigma1, radius0, radius1, &
-       first_step)
-    integer, intent(in)  :: n_streamers
-    real(dp), intent(in) :: r0(n_streamers, 2), r1(n_streamers, 2)
-    real(dp), intent(in) :: sigma0(n_streamers), sigma1(n_streamers)
-    real(dp), intent(in) :: radius0(n_streamers), radius1(n_streamers)
-    logical, intent(in)  :: first_step
-    integer              :: lvl, n, id, i, j, nc, ix
-    real(dp)             :: r(2), dist_vec(2), dist_line, frac, tmp
-    real(dp), parameter  :: pi = acos(-1.0_dp)
+  ! Linearly interpolate tabulated data for effective ionization rate
+  subroutine get_k_eff(fld, k_eff)
+    real(dp), intent(in)  :: fld
+    real(dp), intent(out) :: k_eff
+    real(dp)              :: frac, low_frac
+    integer               :: low_ix
 
-    nc = tree%n_cell
+    frac = (fld - k_eff_table_x_min) * k_eff_table_inv_fac
 
-    !$omp parallel private(lvl, n, id, i, j, k, r, dist_vec, dist_line, frac, tmp, ix)
-    do lvl = 1, tree%highest_lvl
-       !$omp do
-       do n = 1, size(tree%lvls(lvl)%leaves)
-          id = tree%lvls(lvl)%leaves(n)
+    ! Check bounds
+    if (frac <= 0) then
+       low_ix   = 1
+       low_frac = 1
+    else if (frac >= k_eff_table_n_points - 1) then
+       low_ix   = k_eff_table_n_points - 1
+       low_frac = 0
+    else
+       low_ix   = ceiling(frac)
+       low_frac = low_ix - frac
+    end if
 
-          do j = 1, nc
-             do i = 1, nc
-                tree%boxes(id)%cc(i, j, i_dsigma) = 0.0_dp
+    k_eff = low_frac * k_eff_table(low_ix) + &
+         (1-low_frac) * k_eff_table(low_ix+1)
 
-                if (tree%boxes(id)%cc(i, j, i_lsf) < 0.0_dp) cycle
+  end subroutine get_k_eff
 
-                r = af_r_cc(tree%boxes(id), [i, j])
+  ! Store tabulated data for effective ionization rate
+  subroutine store_k_eff(E_min, E_max, n_points, k_eff)
+    real(dp), intent(in) :: E_min, E_max
+    integer, intent(in)  :: n_points
+    real(dp), intent(in) :: k_eff(n_points)
 
-                do ix = 1, n_streamers
-                   call dist_vec_line(r, r0(ix, :), r1(ix, :), &
-                        2, dist_vec, dist_line, frac)
-
-                   ! Exclude semi-sphere of previous point
-                   if (norm2(dist_vec) <= radius1(ix) .and. (first_step .or. &
-                        (frac > 0 .and. norm2(r0(ix, :) - r) > radius0(ix)))) then
-                      ! Determine radial profile
-                      tmp = dist_line/radius1(ix)
-                      tmp = max(0.0_dp, 1 - 3*tmp**2 + 2*tmp**3)
-                      ! Normalize so that integral of 2 * pi * r * f(r) from 0
-                      ! to R is unity
-                      tmp = tmp * 10 / (3 * pi * radius1(ix)**2)
-
-                      tree%boxes(id)%cc(i, j, i_dsigma) = &
-                           tree%boxes(id)%cc(i, j, i_dsigma) + &
-                           (frac * sigma1(ix) + (1-frac) * sigma0(ix)) * tmp
-                   end if
-                end do
-             end do
-          end do
-       end do
-       !$omp end do
-    end do
-    !$omp end parallel
-
-    ! Add the change in sigma
-    call af_tree_apply(tree, i_sigma, i_dsigma, '+')
-
-  end subroutine update_sigma_new
+    allocate(k_eff_table(n_points))
+    k_eff_table(:) = k_eff
+    k_eff_table_n_points = n_points
+    k_eff_table_x_min = E_min
+    k_eff_table_inv_fac = (n_points - 1)/(E_max - E_min)
+  end subroutine store_k_eff
 
   ! Get the potential along a line
   subroutine get_line_potential(z_min, z_max, n_points, z_line, phi_line)
@@ -259,9 +268,11 @@ contains
   end subroutine solve
 
   ! Write a silo file
-  subroutine write_solution(fname)
+  subroutine write_solution(fname, i_cycle, time)
     character(len=*), intent(in) :: fname
-    call af_write_silo(tree, trim(fname))
+    integer, intent(in)          :: i_cycle
+    real(dp), intent(in)         :: time
+    call af_write_silo(tree, trim(fname), i_cycle, time)
   end subroutine write_solution
 
 end module m_solver

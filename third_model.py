@@ -6,6 +6,7 @@ import h5py
 import copy
 import matplotlib.pyplot as plt
 import argparse
+import model_lib as mlib
 
 parser = argparse.ArgumentParser(
     formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -30,69 +31,6 @@ parser.add_argument('-plot', action='store_true',
                     help='Make plot of solution and original data')
 args = parser.parse_args()
 
-E_threshold = 5e6
-
-
-class Streamer(object):
-
-    def __init__(self, r, v, R, sigma):
-        self.r = np.array(r)
-        self.v = np.array(v)
-        self.R = R
-        self.sigma = sigma
-        self.keep = True
-        self.is_branching = False
-        self.branching_angle = None
-
-    def __repr__(self):
-        return f'Streamer(z = {self.r[1]:.2e}, v = {self.v[1]:.2e}, ' + \
-            f'sigma = {self.sigma:.2e}, R = {self.R:.2e})'
-
-
-def update_sigma(streamers_t1, streamers_t0, first_step):
-    n = len(streamers_t1)
-
-    if len(streamers_t0) != n:
-        raise ValueError('Same number of streamers required')
-
-    r = np.zeros((n, 2))
-    r_prev = np.zeros((n, 2))
-    sigma = np.zeros(n)
-    sigma_prev = np.zeros(n)
-    radius = np.zeros(n)
-    radius_prev = np.zeros(n)
-
-    for i in range(n):
-        r[i] = streamers_t1[i].r
-        r_prev[i] = streamers_t0[i].r
-        sigma[i] = streamers_t1[i].sigma
-        sigma_prev[i] = streamers_t0[i].sigma
-        radius[i] = streamers_t1[i].R
-        radius_prev[i] = streamers_t0[i].R
-
-    m_solver.update_sigma_new(r_prev, r, sigma_prev, sigma,
-                              radius_prev, radius, first_step)
-
-
-def get_high_field_length(phi, dz):
-    E = np.abs(np.gradient(phi, dz))
-    i_max = np.argmax(E)
-    d_i = np.argmax(E[i_max:] < E_threshold)
-    return d_i * dz
-
-
-def get_radius(sigma):
-    tmp = 6.78662043384393e-08 + 0.6133314336312898 * sigma
-    return args.r_scale * np.sqrt(tmp)
-
-
-def get_velocity(sigma):
-    return 318891.6649006611 + 1417943826064.345 * sigma
-
-
-def get_sigma(L_E):
-    return -3.9234629547877727e-07 + 0.0015436863032232415 * L_E
-
 
 with h5py.File(args.h5file, 'r') as h5f:
     z = np.array(h5f['z_line'])  # Could in the future differ from z_grid
@@ -113,6 +51,7 @@ dz = z_grid[1] - z_grid[0]
 dr = r_grid[1] - r_grid[0]
 dt = times[1] - times[0]
 dt_model = dt / args.dt_frac
+time = times[args.cycle]
 
 domain_size = [Nr * dr, Nz * dz]
 
@@ -120,17 +59,21 @@ m_solver.set_rod_electrode([0.0, 0.0], [0.0, 0.15*domain_size[1]], 0.5e-3)
 m_solver.initialize(domain_size, [Nr, Nz], args.box_size, phi_bc)
 m_solver.set_rhs_and_sigma(rhs, sigma)
 
+# Set k_eff
+table_fld, table_k_eff = np.loadtxt('k_eff_air.txt').T
+m_solver.store_k_eff(table_fld[0], table_fld[-1], table_k_eff)
+
 # Compute initial solution
 m_solver.solve(0.0)
-m_solver.write_solution(f'{args.siloname}_{0:04d}')
+m_solver.write_solution(f'{args.siloname}_{0:04d}', 0, time)
 z_phi, phi = m_solver.get_line_potential(z[0], z[-1], len(z))
 
 i_head = np.argmax(np.abs(np.gradient(phi)))
 tmp_radius = args.r_scale * radius
 
-streamers = [Streamer([0.0, z[i_head] - 1.1*tmp_radius],
-                      [0., 0.],
-                      tmp_radius, sigma_z.max())]
+streamers = [mlib.Streamer([0.0, z[i_head] - 1.1*tmp_radius],
+                           [0., 0.],
+                           tmp_radius, sigma_z.max())]
 
 # For plots
 phi_z_pred = np.zeros((args.nsteps+1, Nz))
@@ -143,22 +86,22 @@ z_head = np.zeros((args.nsteps+1))
 z_head[0] = streamers[0].r[1]
 
 L_E_all = np.zeros((args.nsteps+1))
-L_E_all[0] = get_high_field_length(phi, dz)
+L_E_all[0] = mlib.get_high_field_length(phi, dz)
 
 
 for step in range(1, args.nsteps+1):
     streamers_prev = copy.deepcopy(streamers)
 
     # Get input features for model
-    L_E = get_high_field_length(phi, dz)
+    L_E = mlib.get_high_field_length(phi, dz)
 
     for s in streamers:
         old_sigma = s.sigma
         old_v = s.v.copy()
-        s.sigma = min(s.sigma + 1.0e3 * dt_model, get_sigma(L_E))
+        s.sigma = min(s.sigma + 1.0e3 * dt_model, mlib.get_sigma(L_E))
 
-        s.R = get_radius(s.sigma)
-        s.v[1] = get_velocity(s.sigma)
+        s.R = mlib.get_radius(s.sigma, args.r_scale)
+        s.v[1] = mlib.get_velocity(s.sigma)
         s.r = s.r + 0.5 * (old_v + s.v) * dt_model
         print(L_E, s)
 
@@ -166,13 +109,16 @@ for step in range(1, args.nsteps+1):
     z_head[step] = streamers[0].r[1] + streamers[0].R
     L_E_all[step] = L_E
 
-    update_sigma(streamers, streamers_prev, False)
+    mlib.update_sigma(m_solver.update_sigma, streamers, streamers_prev,
+                      time, dt_model, 1e-9, False)
     m_solver.solve(dt_model)
+
+    time += dt_model
 
     z_phi, phi = m_solver.get_line_potential(z[0], z[-1], len(z))
     phi_z_pred[step] = phi
 
-    m_solver.write_solution(f'{args.siloname}_{step:04d}')
+    m_solver.write_solution(f'{args.siloname}_{step:04d}', step, time)
 
 
 if args.plot:
@@ -207,7 +153,7 @@ if args.plot:
     ax[3].plot(z_head, L_E_all, label='model')
 
     # Compare with data
-    L_E_data = [get_high_field_length(phi, dz) for phi in phiz_data]
+    L_E_data = [mlib.get_high_field_length(phi, dz) for phi in phiz_data]
     i_head_data = [np.argmax(np.abs(np.gradient(phi))) for phi in phiz_data]
     z_head_data = [z[i] for i in i_head_data]
 
