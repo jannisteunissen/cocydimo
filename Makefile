@@ -1,41 +1,56 @@
 AF_DIR=$(HOME)/git/afivo
 
+FC := gfortran
+FFLAGS := -O2 -g -std=f2008 -fopenmp -cpp -fPIC -Wall -Wno-unused-dummy-argument
+CFLAGS := -Wall -Winvalid-pch -O3 -fPIC -cpp
+
+BUILD_DIR_2D := build_2d
+BUILD_DIR_3D := build_3d
+
 LIBDIRS_2D := $(AF_DIR)/lib_2d $(AF_DIR)/external_libraries/silo/lib	\
-$(AF_DIR)/external_libraries/hypre/lib $(CURDIR)
+$(AF_DIR)/external_libraries/hypre/lib $(CURDIR)/$(BUILD_DIR_2D)
 LIBDIRS_3D := $(AF_DIR)/lib_3d $(AF_DIR)/external_libraries/silo/lib	\
-$(AF_DIR)/external_libraries/hypre/lib $(CURDIR)
-INCDIRS_2D := $(AF_DIR)/lib_2d $(CURDIR)
-INCDIRS_3D := $(AF_DIR)/lib_3d $(CURDIR)
+$(AF_DIR)/external_libraries/hypre/lib $(CURDIR)/$(BUILD_DIR_3D)
+INCDIRS_2D := $(AF_DIR)/lib_2d
+INCDIRS_3D := $(AF_DIR)/lib_3d
 LIBS := afivo silo HYPRE gomp	# gomp required for f2py
 
-include $(AF_DIR)/src/makerules.make
+.FORCE:
+.PHONY: all lib2d lib3d clean .FORCE
 
-.PHONY: all clean
+all:	lib2d lib3d
 
-all:	m_solver.o m_solver_3d.o
-
-m_solver.o: libsolver.a
-	f2py -c -m poisson m_solver.f90 -lsolver \
+lib2d: $(BUILD_DIR_2D)/libsolver.a
+	FFLAGS="$(FFLAGS) -Dfndims=2" CFLAGS="$(CFLAGS) -Dfndims=2" f2py \
+	-c -m poisson_2d m_solver.f90 cpp_macros.h -lsolver \
 	$(addprefix -I,$(INCDIRS_2D)) $(addprefix -L,$(LIBDIRS_2D)) \
-	$(addprefix -l,$(LIBS)) --f90flags="$(FFLAGS)"
+	$(addprefix -l,$(LIBS)) --build-dir $(BUILD_DIR_2D)
 
-m_solver_3d.o: libsolver_3d.a
-	f2py -c -m poisson_3d m_solver_3d.f90 -lsolver_3d \
+lib3d: $(BUILD_DIR_3D)/libsolver.a
+	FFLAGS="$(FFLAGS) -Dfndims=3" CFLAGS="$(CFLAGS) -Dfndims=3" f2py \
+	-c -m poisson_3d m_solver.f90 cpp_macros.h -lsolver \
 	$(addprefix -I,$(INCDIRS_3D)) $(addprefix -L,$(LIBDIRS_3D)) \
-	$(addprefix -l,$(LIBS)) --f90flags="$(FFLAGS)"
+	$(addprefix -l,$(LIBS)) --build-dir $(BUILD_DIR_3D)
 
 clean:
 	$(RM) *.so *.o *.mod *.a
 
-m_solver_lib.o: INCDIRS=$(INCDIRS_2D)
-m_solver_lib.o: LIBDIRS=$(LIBDIRS_2D)
-m_solver_lib_3d.o: INCDIRS=$(INCDIRS_3D)
-m_solver_lib_3d.o: LIBDIRS=$(LIBDIRS_3D)
+$(BUILD_DIR_2D)/m_solver_lib.o: INCDIRS=$(INCDIRS_2D)
+$(BUILD_DIR_3D)/m_solver_lib.o: INCDIRS=$(INCDIRS_3D)
 
-libsolver.a: m_solver_lib.o
+$(BUILD_DIR_2D)/libsolver.a: $(BUILD_DIR_2D)/m_solver_lib.o
 	$(RM) $@
 	$(AR) rcs $@ $^
 
-libsolver_3d.a: m_solver_lib_3d.o
+$(BUILD_DIR_3D)/libsolver.a: $(BUILD_DIR_3D)/m_solver_lib.o
 	$(RM) $@
 	$(AR) rcs $@ $^
+
+$(BUILD_DIR_2D)/%.o: %.f90
+	mkdir -p $(BUILD_DIR_2D)
+	$(FC) -c -o $@ $< $(FFLAGS) -J $(BUILD_DIR_2D) -Dfndims=2 $(addprefix -I,$(INCDIRS))
+
+$(BUILD_DIR_3D)/%.o: %.f90
+	mkdir -p $(BUILD_DIR_3D)
+	$(FC) -c -o $@ $< $(FFLAGS) -J $(BUILD_DIR_3D) -Dfndims=3 $(addprefix -I,$(INCDIRS))
+

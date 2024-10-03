@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-from poisson import m_solver
+from poisson_2d import m_solver
 import numpy as np
 import h5py
 import copy
@@ -59,21 +59,24 @@ m_solver.set_rod_electrode([0.0, 0.0], [0.0, 0.15*domain_size[1]], 0.5e-3)
 m_solver.initialize(domain_size, [Nr, Nz], args.box_size, phi_bc)
 m_solver.set_rhs_and_sigma(rhs, sigma)
 
-# Set k_eff
-table_fld, table_k_eff = np.loadtxt('k_eff_air.txt').T
-m_solver.store_k_eff(table_fld[0], table_fld[-1], table_k_eff)
-
 # Compute initial solution
 m_solver.solve(0.0)
 m_solver.write_solution(f'{args.siloname}_{0:04d}', 0, time)
-z_phi, phi = m_solver.get_line_potential(z[0], z[-1], len(z))
 
-i_head = np.argmax(np.abs(np.gradient(phi)))
-tmp_radius = args.r_scale * radius
+# Set table with effective ionization rate
+table_fld, table_k_eff = np.loadtxt('k_eff_air.txt').T
+m_solver.store_k_eff(table_fld[0], table_fld[-1], table_k_eff)
 
-streamers = [mlib.Streamer([0.0, z[i_head] - 1.1*tmp_radius],
-                           [0., 0.],
-                           tmp_radius, sigma_z.max())]
+# Locate Emax
+Emax, r_Emax = m_solver.get_max_field_location()
+
+# z-coordinate lies at the center of the streamer head
+radius0 = args.r_scale * radius
+z0 = r_Emax[1] - radius0
+
+_, phi = m_solver.get_line_potential([0., z[0]], [0., z[-1]], len(z))
+
+streamers = [mlib.Streamer([0.0, z0], [0., 0.], radius0, sigma_z.max())]
 
 # For plots
 phi_z_pred = np.zeros((args.nsteps+1, Nz))
@@ -83,7 +86,7 @@ sigma_head = np.zeros((args.nsteps+1))
 sigma_head[0] = streamers[0].sigma
 
 z_head = np.zeros((args.nsteps+1))
-z_head[0] = streamers[0].r[1]
+z_head[0] = streamers[0].r[1] + streamers[0].R
 
 L_E_all = np.zeros((args.nsteps+1))
 L_E_all[0] = mlib.get_high_field_length(phi, dz)
@@ -115,7 +118,7 @@ for step in range(1, args.nsteps+1):
 
     time += dt_model
 
-    z_phi, phi = m_solver.get_line_potential(z[0], z[-1], len(z))
+    _, phi = m_solver.get_line_potential([0., z[0]], [0., z[-1]], len(z))
     phi_z_pred[step] = phi
 
     m_solver.write_solution(f'{args.siloname}_{step:04d}', step, time)

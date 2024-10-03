@@ -26,12 +26,13 @@ class Streamer(object):
 def update_sigma(method, streamers_t1, streamers_t0, time, dt,
                  channel_delay, first_step):
     n = len(streamers_t1)
+    ndim = streamers_t1[0].ndim
 
     if len(streamers_t0) != n:
         raise ValueError('Same number of streamers required')
 
-    r = np.zeros((n, 2))
-    r_prev = np.zeros((n, 2))
+    r = np.zeros((n, ndim))
+    r_prev = np.zeros((n, ndim))
     sigma = np.zeros(n)
     sigma_prev = np.zeros(n)
     radius = np.zeros(n)
@@ -57,7 +58,7 @@ def get_high_field_length(phi, dz):
 
 
 def get_radius(sigma, r_scale):
-    tmp = 6.78662043384393e-08 + 0.6133314336312898 * sigma
+    tmp = np.maximum(0., 6.78662043384393e-08 + 0.6133314336312898 * sigma)
     return r_scale * np.sqrt(tmp)
 
 
