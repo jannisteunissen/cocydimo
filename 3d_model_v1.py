@@ -47,7 +47,7 @@ m_solver.write_solution(f'{args.siloname}_{0:04d}', 0, 0.)
 
 # Set table with effective ionization rate
 table_fld, table_k_eff = np.loadtxt('k_eff_air.txt').T
-m_solver.store_k_eff(table_fld[0], table_fld[-1], 0*table_k_eff)
+m_solver.store_k_eff(table_fld[0], table_fld[-1], table_k_eff)
 
 z_phi, phi = m_solver.get_line_potential([0.5*Lx, 0.5*Lx, 0.],
                                          [0.5*Lx, 0.5*Lx, Lx], Nz)
