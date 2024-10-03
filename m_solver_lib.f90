@@ -59,7 +59,7 @@ contains
     nc = box%n_cell
 
     if (minval(box%dr) > 1.9_dp * min_dr .and. ( &
-         maxval(abs(box%cc(DTIMES(1:nc), mg%i_eps) - 1)) > 1e-6_dp .or. &
+         maxval(box%cc(DTIMES(1:nc), i_E_norm)) > 3e6_dp .or. &
          iand(box%tag, mg_lsf_box) > 0)) then
        cell_flags = af_do_ref
     else

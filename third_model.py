@@ -89,19 +89,20 @@ z_head = np.zeros((args.nsteps+1))
 z_head[0] = streamers[0].r[1] + streamers[0].R
 
 L_E_all = np.zeros((args.nsteps+1))
-L_E_all[0] = mlib.get_high_field_length(phi, dz)
+L_E_all[0] = mlib.get_high_field_length(z, np.abs(np.gradient(phi, dz)))
 
 
 for step in range(1, args.nsteps+1):
     streamers_prev = copy.deepcopy(streamers)
 
     # Get input features for model
-    L_E = mlib.get_high_field_length(phi, dz)
+    L_E = mlib.get_high_field_length(z, np.abs(np.gradient(phi, dz)))
 
     for s in streamers:
         old_sigma = s.sigma
         old_v = s.v.copy()
-        s.sigma = min(s.sigma + 1.0e3 * dt_model, mlib.get_sigma(L_E))
+        s.sigma = min(s.sigma + mlib.max_dt_sigma * dt_model,
+                      mlib.get_sigma(L_E))
 
         s.R = mlib.get_radius(s.sigma, args.r_scale)
         s.v[1] = mlib.get_velocity(s.sigma)
@@ -156,7 +157,8 @@ if args.plot:
     ax[3].plot(z_head, L_E_all, label='model')
 
     # Compare with data
-    L_E_data = [mlib.get_high_field_length(phi, dz) for phi in phiz_data]
+    L_E_data = [mlib.get_high_field_length(z, np.abs(np.gradient(phi, dz)))
+                for phi in phiz_data]
     i_head_data = [np.argmax(np.abs(np.gradient(phi))) for phi in phiz_data]
     z_head_data = [z[i] for i in i_head_data]
 

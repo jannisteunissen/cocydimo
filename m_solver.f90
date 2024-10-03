@@ -81,7 +81,7 @@ contains
   subroutine adjust_refinement(n_add)
     integer, intent(out) :: n_add
     type(ref_info_t) :: refine_info
-    call af_adjust_refinement(tree, refinement_criterion, refine_info, 2)
+    call af_adjust_refinement(tree, refinement_criterion, refine_info, 0)
     n_add = refine_info%n_add
   end subroutine adjust_refinement
 
@@ -246,37 +246,53 @@ contains
     real(dp), intent(out) :: r(fndims)
     real(dp)              :: E_max_norm
     type(af_loc_t)        :: loc
-    logical               :: success
 
     call af_tree_max_cc(tree, i_E_norm, E_max_norm, loc)
     r = af_r_loc(tree, loc)
-
-    E_max_vec = af_interp1_fc(tree, r, i_E_vec, success)
-    if (.not. success) error stop "Interpolation error"
+    call get_field_vector_at(r, E_max_vec)
   end subroutine get_max_field_location
 
-  ! Trace the field from a location
-  subroutine get_head_trace(r0, v0, length, n_steps, E_vec, sigma)
-    real(dp), intent(in)  :: r0(fndims), v0(fndims), length
-    integer, intent(in)   :: n_steps
-    real(dp), intent(out) :: E_vec(fndims, n_steps)
-    real(dp), intent(out) :: sigma(n_steps)
-    real(dp)              :: r(fndims), dr(fndims)
-    integer               :: n
+  subroutine get_field_vector_at(r, E_vec)
+    real(dp), intent(in)  :: r(fndims)
+    real(dp), intent(out) :: E_vec(fndims)
     logical               :: success
 
+    E_vec = af_interp1_fc(tree, r, i_E_vec, success)
+    if (.not. success) error stop "Interpolation error"
+  end subroutine get_field_vector_at
+
+  ! Trace the value of a variable along a line
+  subroutine get_var_along_line(varname, r0, direction, length, n_steps, z, line)
+    character(len=*), intent(in) :: varname
+    real(dp), intent(in)         :: r0(fndims), direction(fndims), length
+    integer, intent(in)          :: n_steps
+    real(dp), intent(out)        :: z(n_steps)
+    real(dp), intent(out)        :: line(n_steps)
+    real(dp)                     :: r(fndims), dr(fndims)
+    integer                      :: n, i_var
+    logical                      :: success
+
+    select case (varname)
+    case ('sigma')
+       i_var = i_sigma
+    case ('phi')
+       i_var = mg%i_phi
+    case ('E_norm')
+       i_var = i_E_norm
+    case default
+       error stop 'Unknown variable'
+    end select
+
     r = r0
-    dr = length * v0 / (norm2(v0) * (n_steps - 1))
+    dr = length * direction / (norm2(direction) * (n_steps - 1))
 
     do n = 1, n_steps
-       E_vec(:, n) = af_interp1_fc(tree, r, i_E_vec, success)
-       sigma(n:n) = af_interp1(tree, r, [i_sigma], success)
+       line(n:n) = af_interp1(tree, r, [i_var], success)
+       z(n) = (n-1) * norm2(dr)
        if (.not. success) error stop "Interpolation error"
-
        r = r + dr
     end do
-
-  end subroutine get_head_trace
+  end subroutine get_var_along_line
 
   ! Get the potential along a line
   subroutine get_line_potential(r0, r1, n_points, r_line, phi_line)

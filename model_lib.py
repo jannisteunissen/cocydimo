@@ -3,6 +3,8 @@
 import numpy as np
 
 E_threshold = 5e6               # Used in fits
+max_dt_sigma = 1e3              # Maximum time derivative of sigma
+sigma_min = 5e-9                # Minimum sigma
 
 
 class Streamer(object):
@@ -42,7 +44,13 @@ def update_sigma(method, streamers_t1, streamers_t0, time, dt,
         r[i] = streamers_t1[i].r
         r_prev[i] = streamers_t0[i].r
         sigma[i] = streamers_t1[i].sigma
-        sigma_prev[i] = streamers_t0[i].sigma
+
+        if first_step:
+            # Use same value for both points
+            sigma_prev[i] = streamers_t1[i].sigma
+        else:
+            sigma_prev[i] = streamers_t0[i].sigma
+
         radius[i] = streamers_t1[i].R
         radius_prev[i] = streamers_t0[i].R
 
@@ -50,11 +58,10 @@ def update_sigma(method, streamers_t1, streamers_t0, time, dt,
            dt, channel_delay, first_step)
 
 
-def get_high_field_length(phi, dz):
-    E = np.abs(np.gradient(phi, dz))
+def get_high_field_length(z, E):
     i_max = np.argmax(E)
-    d_i = np.argmax(E[i_max:] < E_threshold)
-    return d_i * dz
+    i_threshold = i_max + np.argmax(E[i_max:] < E_threshold)
+    return abs(z[i_threshold] - z[i_max])
 
 
 def get_radius(sigma, r_scale):
