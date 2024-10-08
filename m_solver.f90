@@ -33,6 +33,7 @@ contains
     call af_add_fc_variable(tree, "E_vec", ix=i_E_vec)
 
     call af_set_cc_methods(tree, tree%mg_i_eps, af_bc_neumann_zero)
+    call af_set_cc_methods(tree, i_sigma, af_bc_neumann_zero)
     call af_set_cc_methods(tree, i_E_norm, af_bc_neumann_zero)
     call af_set_cc_methods(tree, i_time, af_bc_neumann_zero)
 
@@ -132,17 +133,15 @@ contains
     real(dp), intent(in) :: channel_delay
     logical, intent(in)  :: first_step
     integer              :: lvl, n, id, IJK, nc, ix
-    real(dp)             :: r(fndims), dist_vec(fndims), dist_line, frac, tmp
-    real(dp)             :: k_eff
-    real(dp), parameter  :: pi = acos(-1.0_dp)
-    real(dp), parameter  :: min_electrode_distance = 1e-4_dp
+    real(dp)             :: r(fndims), dist_vec(fndims), r_dist, frac
+    real(dp)             :: k_eff, dsigma
 
     nc = tree%n_cell
 
     if (.not. allocated(k_eff_table)) error stop "Call store_k_eff first"
 
-    !$omp parallel private(lvl, n, id, IJK, r, dist_vec, dist_line, &
-    !$omp &frac, tmp, ix, k_eff)
+    !$omp parallel private(lvl, n, id, IJK, r, dist_vec, r_dist, &
+    !$omp &frac, ix, k_eff, dsigma)
     do lvl = 1, tree%highest_lvl
        !$omp do
        do n = 1, size(tree%lvls(lvl)%leaves)
@@ -158,30 +157,23 @@ contains
 
                do ix = 1, n_streamers
                   call dist_vec_line(r, r0(ix, :), r1(ix, :), &
-                       fndims, dist_vec, dist_line, frac)
+                       fndims, dist_vec, r_dist, frac)
 
                   ! Exclude semi-sphere of previous point
                   if (norm2(dist_vec) <= radius1(ix) .and. (first_step .or. &
-                       (frac > 0 .and. norm2(r0(ix, :) - r) > radius0(ix)))) then
-                     ! Determine radial profile
-                     tmp = dist_line/radius1(ix)
-                     tmp = max(0.0_dp, 1 - 3*tmp**2 + 2*tmp**3)
+                       (frac >= 0 .and. norm2(r0(ix, :) - r) > radius0(ix)))) then
 
-                     ! Normalize so that integral of 2 * pi * r * f(r) from 0
-                     ! to R is unity
-                     tmp = tmp * 10 / (3 * pi * radius1(ix)**2)
+                     call get_sigma_profile(r_dist, radius0(ix), radius1(ix), frac, &
+                          sigma0(ix), sigma1(ix), dsigma)
 
-                     box%cc(IJK, i_dsigma) = box%cc(IJK, i_dsigma) + &
-                          (frac * sigma1(ix) + (1-frac) * sigma0(ix)) * tmp
+                     box%cc(IJK, i_dsigma) = box%cc(IJK, i_dsigma) + dsigma
                      box%cc(IJK, i_time) = t
                   end if
                end do
 
                ! Update channel conductivity, but only where the channel
-               ! has already existed for some time, and away from the
-               ! electrode surface (to avoid instabilities in high fields)
-               if (box%cc(IJK, i_lsf) > min_electrode_distance .and. &
-                    box%cc(IJK, i_time) < t - channel_delay) then
+               ! has already existed for some time
+               if (box%cc(IJK, i_time) < t - channel_delay) then
                   call get_k_eff(box%cc(IJK, i_E_norm), k_eff)
 
                   ! Limit increase to a factor 2 per time step
@@ -200,6 +192,27 @@ contains
     call af_tree_apply(tree, i_sigma, i_dsigma, '+')
 
   end subroutine update_sigma
+
+  subroutine get_sigma_profile(r_dist, radius0, radius1, z_frac, s0, s1, dsigma)
+    real(dp), intent(in)  :: r_dist ! Radial distance
+    real(dp), intent(in)  :: radius0, radius1 ! Radius at s0 and s1
+    real(dp), intent(in)  :: z_frac ! Relative z-coordinate, 0.0 at s0, 1.0 at s1
+    real(dp), intent(in)  :: s0, s1 ! Value at start and end point
+    real(dp), intent(out) :: dsigma
+    real(dp)              :: radius, fac_r, frac_bnd
+    real(dp), parameter   :: pi = acos(-1.0_dp)
+
+    frac_bnd = max(min(z_frac, 1.0_dp), 0.0_dp)
+    radius = max(radius1, radius0)
+
+    ! Smooth-step profile in radial direction. Normalize so that integral of
+    ! 2 * pi * r * f(r) from 0 to R is unity
+    fac_r = r_dist/radius
+    fac_r = min(1.0_dp, max(0.0_dp, 1 - 3*fac_r**2 + 2*fac_r**3))
+    fac_r = fac_r * 10 / (3 * pi * radius**2)
+
+    dsigma = fac_r * (frac_bnd * s1 + (1-frac_bnd) * s0)
+  end subroutine get_sigma_profile
 
   ! Linearly interpolate tabulated data for effective ionization rate
   subroutine get_k_eff(fld, k_eff)

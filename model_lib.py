@@ -60,7 +60,12 @@ def update_sigma(method, streamers_t1, streamers_t0, time, dt,
 
 def get_high_field_length(z, E):
     i_max = np.argmax(E)
-    i_threshold = i_max + np.argmax(E[i_max:] < E_threshold)
+    i_diff = np.argmax(E[i_max:] < E_threshold)
+
+    if i_diff == 0:
+        raise ValueError('The threshold field was not reached')
+
+    i_threshold = i_max + i_diff
     return abs(z[i_threshold] - z[i_max])
 
 

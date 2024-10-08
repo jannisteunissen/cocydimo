@@ -62,6 +62,8 @@ contains
          maxval(box%cc(DTIMES(1:nc), i_E_norm)) > 3e6_dp .or. &
          iand(box%tag, mg_lsf_box) > 0)) then
        cell_flags = af_do_ref
+    else if (maxval(box%cc(DTIMES(1:nc), i_E_norm)) < 2e6_dp) then
+       cell_flags = af_rm_ref
     else
        cell_flags = af_keep_ref
     end if
@@ -122,22 +124,26 @@ contains
     integer, intent(in)   :: n_dim
     real(dp), intent(in)  :: r(n_dim), r0(n_dim), r1(n_dim)
     real(dp), intent(out) :: dist_vec(n_dim) !< Distance vector from line segment
-    real(dp), intent(out) :: dist_line !< Distance from line if it were infinite
-    real(dp), intent(out) :: frac !< Fraction [0,1] along line
+    real(dp), intent(out) :: dist_line       !< Distance from line if it were infinite
+    real(dp), intent(out) :: frac            !< Fraction [0,1] along line
     real(dp)              :: line_len2
+    real(dp), parameter   :: eps = 1e-100_dp
 
     ! Distance to infinite line
     line_len2 = sum((r1 - r0)**2)
-    frac = sum((r - r0) * (r1 - r0))/line_len2
+    if (line_len2 > eps) then
+       frac = sum((r - r0) * (r1 - r0))/line_len2
+    else
+       frac = 0.0_dp
+    end if
+
     dist_vec = r - r0 - frac * (r1 - r0)
     dist_line = norm2(dist_vec)
 
     ! Adjust for finite line
     if (frac <= 0.0_dp) then
-       frac = 0.0_dp
        dist_vec = r - r0
     else if (frac >= 1.0_dp) then
-       frac = 1.0_dp
        dist_vec = r - r1
     end if
   end subroutine dist_vec_line

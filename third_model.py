@@ -21,10 +21,12 @@ parser.add_argument('-nsteps', type=int, default=2,
                     help='How many steps to simulate')
 parser.add_argument('-dt_frac', type=int, default=1,
                     help='Reduce dt in model by this factor')
-parser.add_argument('-box_size', type=int, default=32,
+parser.add_argument('-box_size', type=int, default=8,
                     help='Size of boxes in afivo')
 parser.add_argument('h5file', type=str,
                     help='Input hdf5 file')
+parser.add_argument('-alpha', type=float, default=1.0,
+                    help='Exponential smoothing coefficient')
 parser.add_argument('-siloname', type=str, default='output/simulation',
                     help='Base filename for output Silo files')
 parser.add_argument('-plot', action='store_true',
@@ -96,7 +98,11 @@ for step in range(1, args.nsteps+1):
     streamers_prev = copy.deepcopy(streamers)
 
     # Get input features for model
-    L_E = mlib.get_high_field_length(z, np.abs(np.gradient(phi, dz)))
+    L_E_new = mlib.get_high_field_length(z, np.abs(np.gradient(phi, dz)))
+    if step == 1:
+        L_E = L_E_new
+    else:
+        L_E = args.alpha * L_E_new + (1 - args.alpha) * L_E
 
     for s in streamers:
         old_sigma = s.sigma
