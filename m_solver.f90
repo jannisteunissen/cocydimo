@@ -28,7 +28,7 @@ contains
     call af_add_cc_variable(tree, "sigma", ix=i_sigma)
     call af_add_cc_variable(tree, "dsigma", ix=i_dsigma)
     call af_add_cc_variable(tree, "phi", ix=mg%i_phi)
-    call af_add_cc_variable(tree, "E_norm", ix=i_E_norm)
+    call af_add_cc_variable(tree, "electric_fld", ix=i_E_norm)
     call af_add_cc_variable(tree, "time", ix=i_time)
     call af_add_fc_variable(tree, "E_vec", ix=i_E_vec)
 

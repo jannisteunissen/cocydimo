@@ -3,7 +3,7 @@
 import numpy as np
 
 E_threshold = 5e6               # Used in fits
-max_dt_sigma = 1e3              # Maximum time derivative of sigma
+max_dt_sigma = 100e3            # Maximum time derivative of sigma
 sigma_min = 5e-9                # Minimum sigma
 
 
@@ -80,3 +80,21 @@ def get_velocity(sigma):
 
 def get_sigma(L_E):
     return -3.9234629547877727e-07 + 0.0015436863032232415 * L_E
+
+
+def get_radius_v2(L_E, E_avg):
+    tmp = -4.18e-07 + 2.72e-03 * L_E
+    if tmp < 0:
+        raise ValueError("Too small radius")
+    return np.sqrt(tmp)
+    # return -2.05e-4 + 3.67e-1 * L_E + 5.88e-10 * E_avg
+
+
+def get_velocity_v2(L_E):
+    return -1.61e+05 + 2.64e+09 * L_E
+
+
+def get_sigma_v2(L_E, E_avg):
+    # return 2.91e-2 * L_E**1.36
+    return (3.64e-04 + 1.13e+00 * L_E)**2
+    # return -3.95e-6 + 2.25e-3 * L_E + 1.86e-12 * E_avg
