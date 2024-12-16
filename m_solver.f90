@@ -9,11 +9,13 @@ contains
 
   ! Set the domain size, the finest grid spacing (if the mesh was uniform) and
   ! other domain properties
-  subroutine initialize_domain(domain_len, grid_size, box_size, applied_voltage)
+  subroutine initialize_domain(domain_len, grid_size, box_size, &
+       applied_voltage, mem_limit_gb)
     real(dp), intent(in) :: domain_len(fndims)
     integer, intent(in)  :: grid_size(fndims)
     integer, intent(in)  :: box_size
     real(dp), intent(in) :: applied_voltage
+    real(dp), intent(in) :: mem_limit_gb
     integer              :: n, n_add, max_lvl, coord_t, n_its
     real(dp)             :: residu
 
@@ -54,7 +56,7 @@ contains
 
     call af_init(tree, box_size, domain_len, &
          [box_size, box_size, box_size], coord=coord_t, &
-         mem_limit_gb=2.0_dp)
+         mem_limit_gb=mem_limit_gb)
 
     mg%sides_bc => sides_bc ! Method for boundary conditions
 
@@ -69,13 +71,13 @@ contains
             error stop "Incompatible grid size"
        call af_refine_up_to_lvl(tree, max_lvl)
     else
+       print *, "Performing initial grid refinement"
        ! Use grid refinement, which requires the electric field
        call solve(0.0_dp, n_its, residu)
 
        do n = 1, 10
           call adjust_refinement(n_add)
           if (n_add == 0) exit
-          print *, "Initial refinement, step", n
           call solve(0.0_dp, n_its, residu)
        end do
     end if

@@ -65,7 +65,7 @@ def get_high_field_length(z, E, c0=None, dz0=None, dz=None):
 
     if i_diff == 0:
         # Threshold was not reached (or at domain boundary)
-        return None
+        return 0.0
 
     i_threshold = i_max + i_diff
     L_E = abs(z[i_threshold] - z[i_max])

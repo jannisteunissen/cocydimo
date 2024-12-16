@@ -71,7 +71,8 @@ print(f'End time:           {end_time:.3e} s')
 
 m_solver.set_rod_electrode([0.0, 0.0], field_rod_r1*domain_size,
                            field_rod_radius)
-m_solver.initialize_domain(domain_size, args.grid_size, args.box_size, phi_bc)
+m_solver.initialize_domain(domain_size, args.grid_size, args.box_size,
+                           phi_bc, 1.0)
 
 # Compute initial solution
 m_solver.solve(0.0)
