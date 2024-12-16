@@ -4,6 +4,7 @@ module m_solver_lib
   use m_af_all
 
   implicit none
+  public
 
   real(dp), parameter :: eps0 = 8.8541878128e-12_dp ! permitivity of vacuum (SI)
   real(dp), parameter :: pi = acos(-1.0_dp)
@@ -30,26 +31,12 @@ module m_solver_lib
   real(dp)              :: k_eff_table_x_min
   real(dp)              :: k_eff_table_inv_fac
 
-  ! To store initial conditions
-  real(dp), allocatable :: rhs_input(DTIMES(:)), sigma_input(DTIMES(:))
+  ! For mesh refinement
+  real(dp) :: refine_threshold = 3e6_dp ! Electric field threshold in V/m
+  real(dp) :: derefine_threshold = 2e6_dp ! Electric field threshold in V/m
+
 
 contains
-
-  ! This routine sets the initial conditions for each box
-  subroutine set_init_cond(box)
-    type(box_t), intent(inout) :: box
-    integer                    :: IJK, nc, ix_offset(fndims), ix(fndims)
-
-    nc = box%n_cell
-    box%cc(DTIMES(:), mg%i_phi) = 0
-    ix_offset = (box%ix - 1) * nc
-
-    do KJI_DO(1, nc)
-       ix = ix_offset + [IJK]
-       box%cc(IJK, i_sigma)  = sigma_input(DINDEX(ix))
-       box%cc(IJK, mg%i_rhs) = rhs_input(DINDEX(ix))
-    end do; CLOSE_DO
-  end subroutine set_init_cond
 
   subroutine refinement_criterion(box, cell_flags)
     type(box_t), intent(in) :: box
@@ -59,10 +46,11 @@ contains
     nc = box%n_cell
 
     if (minval(box%dr) > 1.9_dp * min_dr .and. ( &
-         maxval(box%cc(DTIMES(1:nc), i_E_norm)) > 3e6_dp .or. &
+         maxval(box%cc(DTIMES(1:nc), i_E_norm)) > refine_threshold .or. &
          iand(box%tag, mg_lsf_box) > 0)) then
        cell_flags = af_do_ref
-    else if (maxval(box%cc(DTIMES(1:nc), i_E_norm)) < 2e6_dp) then
+    else if (maxval(box%cc(DTIMES(1:nc), i_E_norm)) < derefine_threshold .and. &
+         minval(box%dr) < 2.1_dp * min_dr) then
        cell_flags = af_rm_ref
     else
        cell_flags = af_keep_ref

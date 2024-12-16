@@ -7,12 +7,15 @@ module m_solver
 
 contains
 
-  subroutine initialize(domain_len, grid_size, box_size, applied_voltage)
+  ! Set the domain size, the finest grid spacing (if the mesh was uniform) and
+  ! other domain properties
+  subroutine initialize_domain(domain_len, grid_size, box_size, applied_voltage)
     real(dp), intent(in) :: domain_len(fndims)
     integer, intent(in)  :: grid_size(fndims)
     integer, intent(in)  :: box_size
     real(dp), intent(in) :: applied_voltage
-    integer              :: n, n_add, max_lvl, coord_t
+    integer              :: n, n_add, max_lvl, coord_t, n_its
+    real(dp)             :: residu
 
     coord_t = af_xyz
     if (fndims == 2) coord_t = af_cyl
@@ -66,26 +69,43 @@ contains
             error stop "Incompatible grid size"
        call af_refine_up_to_lvl(tree, max_lvl)
     else
-       ! Use grid refinement
-       call solve(0.0_dp)
+       ! Use grid refinement, which requires the electric field
+       call solve(0.0_dp, n_its, residu)
 
        do n = 1, 10
           call adjust_refinement(n_add)
           if (n_add == 0) exit
           print *, "Initial refinement, step", n
-          call solve(0.0_dp)
+          call solve(0.0_dp, n_its, residu)
        end do
     end if
 
-  end subroutine initialize
+  end subroutine initialize_domain
 
+  ! Set the electric field thresholds for grid refinement
+  subroutine set_refinement_thresholds(refine_field, derefine_field)
+    real(dp), intent(in) :: refine_field ! Refine when the field is above this value
+    real(dp), intent(in) :: derefine_field ! Derefine when the field is below this value
+
+    refine_threshold = refine_field
+    derefine_threshold = derefine_field
+  end subroutine set_refinement_thresholds
+
+  ! Update the refinement of the mesh. Changes the local refinement by at most
+  ! one level at a time, so multiple calls might be needed.
   subroutine adjust_refinement(n_add)
     integer, intent(out) :: n_add
     type(ref_info_t) :: refine_info
+
+    ! Restrict species, for the ghost cells near refinement boundaries
+    call af_restrict_tree(tree, [i_sigma])
+    call af_gc_tree(tree, [i_sigma])
+
     call af_adjust_refinement(tree, refinement_criterion, refine_info, 0)
     n_add = refine_info%n_add
   end subroutine adjust_refinement
 
+  ! Specify geometry of rod electrode
   subroutine set_rod_electrode(r0, r1, radius)
     real(dp), intent(in) :: r0(fndims), r1(fndims), radius
 
@@ -94,32 +114,6 @@ contains
     rod_r1 = r1
     rod_radius = radius
   end subroutine set_rod_electrode
-
-  subroutine set_rhs_and_sigma(nx, ny, rhs, sigma)
-    integer, intent(in) :: nx, ny
-    real(dp), intent(in) :: rhs(nx, ny)
-    real(dp), intent(in) :: sigma(nx, ny)
-
-#if fndims == 2
-    if (any(shape(rhs) /= uniform_grid_size)) then
-       print *, "shape(rhs): ", shape(rhs)
-       print *, "uniform_grid_size: ", uniform_grid_size
-       error stop "rhs has wrong size"
-    end if
-    if (any(shape(sigma) /= uniform_grid_size)) then
-       print *, "shape(sigma): ", shape(sigma)
-       print *, "uniform_grid_size: ", uniform_grid_size
-       error stop "sigma has wrong size"
-    end if
-
-    rhs_input = rhs
-    sigma_input = sigma
-
-    call af_loop_box(tree, set_init_cond, leaves_only=.true.)
-#elif fndims == 3
-    error stop "not implemented"
-#endif
-  end subroutine set_rhs_and_sigma
 
   ! Update sigma (conductivity)
   subroutine update_sigma(n_streamers, r0, r1, sigma0, sigma1, radius0, radius1, &
@@ -177,7 +171,7 @@ contains
                   call get_k_eff(box%cc(IJK, i_E_norm), k_eff)
 
                   ! Limit increase to a factor 2 per time step
-                  box%cc(IJK, i_dsigma) = min(2.0_dp, exp(dt * k_eff) - 1.0_dp) * &
+                  box%cc(IJK, i_dsigma) = min(1.0_dp, exp(dt * k_eff) - 1.0_dp) * &
                        box%cc(IJK, i_sigma)
                end if
 
@@ -203,13 +197,10 @@ contains
     real(dp), parameter   :: pi = acos(-1.0_dp)
 
     frac_bnd = max(min(z_frac, 1.0_dp), 0.0_dp)
-    radius = max(radius1, radius0)
+    radius = radius1
 
-    ! Smooth-step profile in radial direction. Normalize so that integral of
-    ! 2 * pi * r * f(r) from 0 to R is unity
-    fac_r = r_dist/radius
-    fac_r = min(1.0_dp, max(0.0_dp, 1 - 3*fac_r**2 + 2*fac_r**3))
-    fac_r = fac_r * 10 / (3 * pi * radius**2)
+    ! 1-(r/R)^2 profile in radial direction
+    fac_r = 2 * max(0.0_dp, 1 - (r_dist/radius)**2) / (pi * radius**2)
 
     dsigma = fac_r * (frac_bnd * s1 + (1-frac_bnd) * s0)
   end subroutine get_sigma_profile
@@ -253,7 +244,7 @@ contains
     k_eff_table_inv_fac = (n_points - 1)/(E_max - E_min)
   end subroutine store_k_eff
 
-  ! Get information about maximum electric field
+  ! Get the maximum electric field and its location
   subroutine get_max_field_location(E_max_vec, r)
     real(dp), intent(out) :: E_max_vec(fndims)
     real(dp), intent(out) :: r(fndims)
@@ -265,6 +256,7 @@ contains
     call get_field_vector_at(r, E_max_vec)
   end subroutine get_max_field_location
 
+  ! Get the electric field vector at a location
   subroutine get_field_vector_at(r, E_vec)
     real(dp), intent(in)  :: r(fndims)
     real(dp), intent(out) :: E_vec(fndims)
@@ -275,11 +267,12 @@ contains
   end subroutine get_field_vector_at
 
   ! Trace the value of a variable along a line
-  subroutine get_var_along_line(varname, r0, direction, length, n_steps, z, line)
+  subroutine get_var_along_line(varname, r0, direction, length, n_steps, &
+       z_line, line)
     character(len=*), intent(in) :: varname
     real(dp), intent(in)         :: r0(fndims), direction(fndims), length
     integer, intent(in)          :: n_steps
-    real(dp), intent(out)        :: z(n_steps)
+    real(dp), intent(out)        :: z_line(n_steps)
     real(dp), intent(out)        :: line(n_steps)
     real(dp)                     :: r(fndims), dr(fndims)
     integer                      :: n, i_var
@@ -301,38 +294,19 @@ contains
 
     do n = 1, n_steps
        line(n:n) = af_interp1(tree, r, [i_var], success)
-       z(n) = (n-1) * norm2(dr)
+       z_line(n) = (n-1) * norm2(dr)
        if (.not. success) error stop "Interpolation error"
        r = r + dr
     end do
   end subroutine get_var_along_line
 
-  ! Get the potential along a line
-  subroutine get_line_potential(r0, r1, n_points, r_line, phi_line)
-    real(dp), intent(in)  :: r0(fndims)
-    real(dp), intent(in)  :: r1(fndims)
-    integer, intent(in)   :: n_points
-    real(dp), intent(out) :: r_line(fndims, n_points)
-    real(dp), intent(out) :: phi_line(n_points)
-    integer               :: i
-    logical               :: success
-    real(dp)              :: dz(fndims)
-
-    dz = (r1 - r0) / max(1, n_points-1)
-
-    do i = 1, n_points
-       r_line(:, i) = r0 + (i-1) * dz
-       phi_line(i:i) = af_interp1(tree, r_line(:, i), [mg%i_phi], success)
-       if (.not. success) error stop "interpolation error"
-    end do
-  end subroutine get_line_potential
-
   ! Compute new potential for a given time step using the current sigma
-  subroutine solve(dt)
+  subroutine solve(dt, n_iterations, residu)
     real(dp), intent(in)  :: dt
+    integer, intent(out)  :: n_iterations
+    real(dp), intent(out) :: residu
     integer, parameter    :: max_iterations = 100
-    integer               :: mg_iter
-    real(dp)              :: residu, prev_residu, max_rhs
+    real(dp)              :: prev_residu, max_rhs
 
     call af_loop_box_arg(tree, set_epsilon_from_sigma, [dt], leaves_only=.true.)
     call af_restrict_tree(tree, [tree%mg_i_eps])
@@ -348,20 +322,18 @@ contains
     call af_tree_maxabs_cc(tree, mg%i_rhs, max_rhs)
     prev_residu = huge(1.0_dp)
 
-    do mg_iter = 1, max_iterations
+    do n_iterations = 1, max_iterations
        call mg_fas_fmg(tree, mg, set_residual=.true., have_guess=.true.)
        call af_tree_maxabs_cc(tree, mg%i_tmp, residu)
        if (residu < 1e-5_dp * max_rhs .or. residu > 0.5 * prev_residu) exit
        prev_residu = residu
     end do
 
-    print *, "n_iterations: ", mg_iter, "residu: ", residu
-
-    ! Compute new rhs
+    ! Compute new rhs with standard Laplace operator
     call compute_rhs(tree, mg_lpl)
 
-    ! Compute electric field
-    call mg_compute_phi_gradient(tree, mg, i_E_vec, -1.0_dp, i_E_norm)
+    ! Compute electric field with standard Laplace operator
+    call mg_compute_phi_gradient(tree, mg_lpl, i_E_vec, -1.0_dp, i_E_norm)
     call af_gc_tree(tree, [i_E_norm])
 
   end subroutine solve
@@ -371,6 +343,11 @@ contains
     character(len=*), intent(in) :: fname
     integer, intent(in)          :: i_cycle
     real(dp), intent(in)         :: time
+
+    ! Ensure valid ghost cells
+    call af_restrict_tree(tree, [i_sigma])
+    call af_gc_tree(tree, [i_sigma])
+
     call af_write_silo(tree, trim(fname), i_cycle, time)
   end subroutine write_solution
 
