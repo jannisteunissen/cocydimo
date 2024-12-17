@@ -17,7 +17,6 @@ class Streamer(object):
         self.is_branching = False
         self.branching_angle = None
         self.branching_axis = None
-        self.time_previous_branch = -1e100
 
     def __repr__(self):
         with np.printoptions(formatter={'float': lambda x: format(x, '.2E')}):
@@ -76,18 +75,18 @@ def get_high_field_length(z, E, c0=None, dz0=None, dz=None):
     return L_E
 
 
-def get_radius_v3(L_E):
+def get_radius(L_E):
     R = np.where(L_E < 1e-3,
                  2.897e-05 + 1.229 * L_E,
                  2.897e-05 + 1.229 * 1e-3 + 6.271e-01 * (L_E - 1e-3))
     return R
 
 
-def get_velocity_v3(L_E):
+def get_velocity(L_E):
     return 1.78e+09 * L_E
 
 
-def get_sigma_v3(L_E):
+def get_sigma(L_E):
     sigma = np.where(L_E < 1e-3, 1e-8 + 1.397 * L_E**2,
                      1e-8 + 1.397 * 1e-6 + (L_E - 1e-3) * 2 * 1.397 * 1e-3)
     return sigma

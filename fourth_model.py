@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-from poisson_2d import m_solver
+from poisson_2d import m_solver as p2d
 import numpy as np
 from numpy.linalg import norm
 import h5py
@@ -69,29 +69,30 @@ print(f'Time step in data:  {dt:.3e} s')
 print(f'Time step in model: {dt_model:.3e} s')
 print(f'End time:           {end_time:.3e} s')
 
-m_solver.set_rod_electrode([0.0, 0.0], field_rod_r1*domain_size,
-                           field_rod_radius)
-m_solver.initialize_domain(domain_size, args.grid_size, args.box_size,
-                           phi_bc, 1.0)
+p2d.set_rod_electrode([0.0, 0.0], field_rod_r1*domain_size,
+                      field_rod_radius)
+p2d.initialize_domain(domain_size, [args.box_size, args.box_size],
+                      args.box_size, phi_bc, 1.0)
+p2d.use_uniform_grid(args.grid_size)
 
 # Compute initial solution
-m_solver.solve(0.0)
-m_solver.write_solution(f'{args.siloname}{args.run}_{0:04d}', 0, time)
+p2d.solve(0.0)
+p2d.write_solution(f'{args.siloname}{args.run}_{0:04d}', 0, time)
 
 # Set table with effective ionization rate
 table_fld, table_k_eff = np.loadtxt('k_eff_air.txt').T
-m_solver.store_k_eff(table_fld[0], table_fld[-1], table_k_eff)
+p2d.store_k_eff(table_fld[0], table_fld[-1], table_k_eff)
 
 # Get phi and locate Emax
-_, phi = m_solver.get_var_along_line('phi', [0., z[0]], [0., 1.],
-                                     z[-1] - z[0], len(z))
+_, phi, success = p2d.get_var_along_line('phi', [0., z[0]], [0., 1.],
+                                         z[-1] - z[0], len(z))
 
-Emax, r_Emax = m_solver.get_max_field_location()
+Emax, r_Emax = p2d.get_max_field_location()
 
 # Estimate initial streamer radius
 L_E = mlib.get_high_field_length(z, np.abs(np.gradient(phi, dz)),
                                  args.c0_L_E_dx, dz_data, dz)
-radius0 = 0.5 * args.r_scale * mlib.get_radius_v3(L_E)
+radius0 = 0.5 * args.r_scale * mlib.get_radius(L_E)
 
 # z-coordinate lies at the center of the streamer head
 z0 = r_Emax[1] - radius0
@@ -127,10 +128,10 @@ for step in range(1, n_steps_model+1):
     for s in streamers:
         old_sigma = s.sigma
         old_v = s.v.copy()
-        s.sigma = mlib.get_sigma_v3(L_E)
-        s.v[1] = mlib.get_velocity_v3(L_E)
+        s.sigma = mlib.get_sigma(L_E)
+        s.v[1] = mlib.get_velocity(L_E)
 
-        dR = min(args.r_scale * mlib.get_radius_v3(L_E) - s.R,
+        dR = min(args.r_scale * mlib.get_radius(L_E) - s.R,
                  norm(s.v) * dt_model)
         s.R = s.R + dR
 
@@ -141,23 +142,25 @@ for step in range(1, n_steps_model+1):
     z_head[step] = streamers[0].r[1] + streamers[0].R
     L_E_all[step] = L_E
 
-    mlib.update_sigma(m_solver.update_sigma, streamers, streamers_prev,
+    mlib.update_sigma(p2d.update_sigma, streamers, streamers_prev,
                       time, dt_model, 1e-9, False)
-    m_solver.solve(dt_model)
+    p2d.solve(dt_model)
 
     time += dt_model
 
-    _, phi = m_solver.get_var_along_line('phi', [0., z[0]], [0., 1.],
-                                         z[-1] - z[0], len(z))
+    _, phi, success = p2d.get_var_along_line('phi', [0., z[0]], [0., 1.],
+                                             z[-1] - z[0], len(z))
+    if not success:
+        raise RuntimeError('Interpolation error')
     phi_z_pred[step] = phi
 
-    m_solver.write_solution(f'{args.siloname}{args.run}_{step:04d}',
-                            step, time)
+    p2d.write_solution(f'{args.siloname}{args.run}_{step:04d}',
+                       step, time)
 
     streamers = [s for s in streamers if s.keep]
 
     if len(streamers) == 0:
-        raise ValueError('All streamers gone')
+        raise RuntimeError('All streamers gone')
 
 
 if args.plot:

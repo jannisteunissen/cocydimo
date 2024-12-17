@@ -12,15 +12,13 @@ module m_solver_lib
   type(af_t) :: tree
   type(mg_t) :: mg
   type(mg_t) :: mg_lpl
-  real(dp)   :: phi_bc
+  real(dp)   :: applied_voltage
   integer    :: i_sigma
   integer    :: i_E_norm
   integer    :: i_E_vec
   integer    :: i_dsigma
   integer    :: i_lsf
   integer    :: i_time
-  integer    :: uniform_grid_size(fndims)
-  real(dp)   :: min_dr
 
   ! Electrode parameters
   real(dp) :: rod_r0(fndims), rod_r1(fndims), rod_radius = 0.0_dp
@@ -32,29 +30,39 @@ module m_solver_lib
   real(dp)              :: k_eff_table_inv_fac
 
   ! For mesh refinement
-  real(dp) :: refine_threshold = 3e6_dp ! Electric field threshold in V/m
-  real(dp) :: derefine_threshold = 2e6_dp ! Electric field threshold in V/m
-
+  real(dp) :: refine_min_dx            = -1.0_dp ! Minimum grid spacing (m)
+  real(dp) :: refine_max_dx            = -1.0_dp ! Maximum grid spacing (m)
+  real(dp) :: refine_field_threshold   = -1.0_dp ! Refinement field threshold (V/m)
+  real(dp) :: derefine_field_threshold = -1.0_dp ! Derefinement field threshold (V/m)
+  real(dp) :: derefine_dx              = -1.0_dp ! Only derefine up to this value (m)
+  real(dp) :: refine_electrode_max_dx  = -1.0_dp ! Maximum dx around electrode (m)
 
 contains
 
   subroutine refinement_criterion(box, cell_flags)
     type(box_t), intent(in) :: box
     integer, intent(out)    :: cell_flags(DTIMES(box%n_cell))
+    real(dp)                :: max_field, dx
     integer                 :: nc
 
     nc = box%n_cell
+    max_field = maxval(box%cc(DTIMES(1:nc), i_E_norm))
+    dx = minval(box%dr)
 
-    if (minval(box%dr) > 1.9_dp * min_dr .and. ( &
-         maxval(box%cc(DTIMES(1:nc), i_E_norm)) > refine_threshold .or. &
-         iand(box%tag, mg_lsf_box) > 0)) then
+    if (max_field > refine_field_threshold .and. dx > 2 * refine_min_dx) then
        cell_flags = af_do_ref
-    else if (maxval(box%cc(DTIMES(1:nc), i_E_norm)) < derefine_threshold .and. &
-         minval(box%dr) < 2.1_dp * min_dr) then
+    else if (iand(box%tag, mg_lsf_box) > 0 .and. &
+         dx > refine_electrode_max_dx) then
+       cell_flags = af_do_ref
+    else if (max_field < derefine_field_threshold .and. dx < derefine_dx) then
        cell_flags = af_rm_ref
     else
        cell_flags = af_keep_ref
     end if
+
+    ! Ensure dx <= refine_max_dx
+    if (dx > refine_max_dx) cell_flags = af_do_ref
+
   end subroutine refinement_criterion
 
   subroutine set_epsilon_from_sigma(box, dt_vec)
@@ -100,7 +108,7 @@ contains
        bc_val = 0.0_dp
     else if (nb == 2 * fndims) then
        bc_type = af_bc_dirichlet
-       bc_val = phi_bc
+       bc_val = applied_voltage
     else
        bc_type = af_bc_neumann
        bc_val = 0.0_dp

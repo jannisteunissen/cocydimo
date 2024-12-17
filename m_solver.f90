@@ -7,24 +7,20 @@ module m_solver
 
 contains
 
-  ! Set the domain size, the finest grid spacing (if the mesh was uniform) and
-  ! other domain properties
-  subroutine initialize_domain(domain_len, grid_size, box_size, &
-       applied_voltage, mem_limit_gb)
-    real(dp), intent(in) :: domain_len(fndims)
-    integer, intent(in)  :: grid_size(fndims)
-    integer, intent(in)  :: box_size
-    real(dp), intent(in) :: applied_voltage
-    real(dp), intent(in) :: mem_limit_gb
-    integer              :: n, n_add, max_lvl, coord_t, n_its
-    real(dp)             :: residu
+  ! Initialize the computational domain
+  subroutine initialize_domain(domain_len, coarse_grid_size, box_size, &
+       voltage, mem_limit_gb)
+    real(dp), intent(in) :: domain_len(fndims)       ! Domain size (m)
+    integer, intent(in)  :: coarse_grid_size(fndims) ! Coarse grid size
+    integer, intent(in)  :: box_size                 ! Size of grid boxes
+    real(dp), intent(in) :: voltage                  ! Applied voltage (V)
+    real(dp), intent(in) :: mem_limit_gb             ! Memory limit (GB)
+    integer              :: coord_t
 
     coord_t = af_xyz
     if (fndims == 2) coord_t = af_cyl
 
-    phi_bc = applied_voltage
-    uniform_grid_size = grid_size
-    min_dr = minval(domain_len / uniform_grid_size)
+    applied_voltage = voltage
 
     call af_add_cc_variable(tree, "phi", ix=mg%i_phi)
     call af_add_cc_variable(tree, "rhs", ix=mg%i_rhs)
@@ -54,44 +50,58 @@ contains
        call af_set_cc_methods(tree, i_lsf, funcval=set_lsf_box)
     end if
 
-    call af_init(tree, box_size, domain_len, &
-         [box_size, box_size, box_size], coord=coord_t, &
-         mem_limit_gb=mem_limit_gb)
+    call af_init(tree, box_size, domain_len, coarse_grid_size, &
+         coord=coord_t, mem_limit_gb=mem_limit_gb)
 
     mg%sides_bc => sides_bc ! Method for boundary conditions
 
     ! Create a copy of the operator but without the variable coefficient
     mg_lpl = mg
     mg_lpl%operator_mask = mg_normal_box + mg_lsf_box
-
-    if (fndims == 2) then
-       ! Refine uniformly so that we can use simulation data initially
-       max_lvl = nint(log(grid_size(1) / real(box_size, dp))/log(2.0_dp)) + 1
-       if (any(box_size * 2**(max_lvl-1) /= grid_size)) &
-            error stop "Incompatible grid size"
-       call af_refine_up_to_lvl(tree, max_lvl)
-    else
-       print *, "Performing initial grid refinement"
-       ! Use grid refinement, which requires the electric field
-       call solve(0.0_dp, n_its, residu)
-
-       do n = 1, 10
-          call adjust_refinement(n_add)
-          if (n_add == 0) exit
-          call solve(0.0_dp, n_its, residu)
-       end do
-    end if
-
   end subroutine initialize_domain
 
-  ! Set the electric field thresholds for grid refinement
-  subroutine set_refinement_thresholds(refine_field, derefine_field)
-    real(dp), intent(in) :: refine_field ! Refine when the field is above this value
-    real(dp), intent(in) :: derefine_field ! Derefine when the field is below this value
+  ! Perform uniform initial refinement of the domain
+  subroutine use_uniform_grid(uniform_grid_size)
+    integer, intent(in) :: uniform_grid_size(fndims)
+    integer             :: max_lvl
 
-    refine_threshold = refine_field
-    derefine_threshold = derefine_field
-  end subroutine set_refinement_thresholds
+    ! Refine uniformly
+    max_lvl = nint(log(uniform_grid_size(1) / real(tree%n_cell, dp)) / &
+         log(2.0_dp)) + 1
+
+    if (any(tree%n_cell * 2**(max_lvl-1) /= uniform_grid_size)) &
+         error stop "Incompatible grid size"
+    call af_refine_up_to_lvl(tree, max_lvl)
+  end subroutine use_uniform_grid
+
+  ! Set parameters for grid refinement
+  subroutine set_refinement(refine_field, derefine_field, &
+       min_dx, max_dx, electrode_max_dx, derefine_levels)
+    real(dp), intent(in) :: refine_field     ! Refine when the field is above this value
+    real(dp), intent(in) :: derefine_field   ! Derefine when the field is below this value
+    real(dp), intent(in) :: min_dx           ! Minimum allowed grid spacing
+    real(dp), intent(in) :: max_dx           ! Maximum allowed grid spacing
+    real(dp), intent(in) :: electrode_max_dx ! Maximum grid spacing around electrode
+    integer, intent(in)  :: derefine_levels  ! How many levels can be derefined
+    integer              :: n_add, n, n_its
+    real(dp)             :: residu
+
+    refine_field_threshold   = refine_field
+    derefine_field_threshold = derefine_field
+    refine_min_dx            = min_dx
+    refine_max_dx            = max_dx
+    refine_electrode_max_dx  = electrode_max_dx
+    ! Finest dx is between min_dx and 2*min_dx; only derefine when dx < derefine_dx
+    derefine_dx              = min_dx * 2**derefine_levels
+
+    call solve(0.0_dp, n_its, residu)
+
+    do n = 1, 20
+       call adjust_refinement(n_add)
+       if (n_add == 0) exit
+       call solve(0.0_dp, n_its, residu)
+    end do
+  end subroutine set_refinement
 
   ! Update the refinement of the mesh. Changes the local refinement by at most
   ! one level at a time, so multiple calls might be needed.
@@ -246,39 +256,45 @@ contains
     k_eff_table_inv_fac = (n_points - 1)/(E_max - E_min)
   end subroutine store_k_eff
 
+  ! Get the finest grid spacing of the mesh
+  subroutine get_finest_grid_spacing(dx_min)
+    real(dp), intent(out) :: dx_min
+    dx_min = af_min_dr(tree)
+  end subroutine get_finest_grid_spacing
+
   ! Get the maximum electric field and its location
   subroutine get_max_field_location(E_max_vec, r)
     real(dp), intent(out) :: E_max_vec(fndims)
     real(dp), intent(out) :: r(fndims)
     real(dp)              :: E_max_norm
     type(af_loc_t)        :: loc
+    logical               :: success
 
     call af_tree_max_cc(tree, i_E_norm, E_max_norm, loc)
     r = af_r_loc(tree, loc)
-    call get_field_vector_at(r, E_max_vec)
+    call get_field_vector_at(r, E_max_vec, success)
   end subroutine get_max_field_location
 
   ! Get the electric field vector at a location
-  subroutine get_field_vector_at(r, E_vec)
+  subroutine get_field_vector_at(r, E_vec, success)
     real(dp), intent(in)  :: r(fndims)
     real(dp), intent(out) :: E_vec(fndims)
-    logical               :: success
+    logical, intent(out)  :: success
 
     E_vec = af_interp1_fc(tree, r, i_E_vec, success)
-    if (.not. success) error stop "Interpolation error"
   end subroutine get_field_vector_at
 
   ! Trace the value of a variable along a line
   subroutine get_var_along_line(varname, r0, direction, length, n_steps, &
-       z_line, line)
+       z_line, line, success)
     character(len=*), intent(in) :: varname
     real(dp), intent(in)         :: r0(fndims), direction(fndims), length
     integer, intent(in)          :: n_steps
     real(dp), intent(out)        :: z_line(n_steps)
     real(dp), intent(out)        :: line(n_steps)
+    logical, intent(out)         :: success
     real(dp)                     :: r(fndims), dr(fndims)
     integer                      :: n, i_var
-    logical                      :: success
 
     select case (varname)
     case ('sigma')
@@ -296,8 +312,8 @@ contains
 
     do n = 1, n_steps
        line(n:n) = af_interp1(tree, r, [i_var], success)
+       if (.not. success) return
        z_line(n) = (n-1) * norm2(dr)
-       if (.not. success) error stop "Interpolation error"
        r = r + dr
     end do
   end subroutine get_var_along_line
