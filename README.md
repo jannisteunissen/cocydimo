@@ -1,4 +1,4 @@
-Reduced discharge model
+Conducting cylinder discharge model
 ====
 
 This code implements a reduced discharge model in which the conductivity and the potential evolve in time.
