@@ -24,10 +24,10 @@ contains
 
     call af_add_cc_variable(tree, "phi", ix=mg%i_phi)
     call af_add_cc_variable(tree, "rhs", ix=mg%i_rhs)
-    call af_add_cc_variable(tree, "tmp", ix=mg%i_tmp)
+    call af_add_cc_variable(tree, "tmp", ix=mg%i_tmp, write_out=.false.)
     call af_add_cc_variable(tree, "eps", ix=tree%mg_i_eps)
     call af_add_cc_variable(tree, "sigma", ix=i_sigma)
-    call af_add_cc_variable(tree, "dsigma", ix=i_dsigma)
+    call af_add_cc_variable(tree, "dsigma", ix=i_dsigma, write_out=.false.)
     call af_add_cc_variable(tree, "phi", ix=mg%i_phi)
     call af_add_cc_variable(tree, "electric_fld", ix=i_E_norm)
     call af_add_cc_variable(tree, "time", ix=i_time)

@@ -50,7 +50,7 @@ parser.add_argument('-c0_L_E_dx', type=float,
                     help='Correction factor for L_E w.r.t. data grid spacing')
 parser.add_argument('-siloname', type=str, default='output/simulation_3d',
                     help='Base filename for output Silo files')
-parser.add_argument('-rng_seed', type=int, default=8912734,
+parser.add_argument('-rng_seed', type=int,
                     help='Seed for the random number generator')
 parser.add_argument('-c_b', type=float, default=10.,
                     help='Branching coeff. (larger means less branching)')
