@@ -1,0 +1,3 @@
+[submodule "afivo"]
+	path = afivo
+	url = https://github.com/MD-CWI/afivo.git

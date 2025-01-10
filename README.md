@@ -3,11 +3,13 @@ Reduced discharge model
 
 This code implements a reduced discharge model in which the conductivity and the potential evolve in time.
 
-Compilation
+
+Getting the code and compiling for the first time
 ==
 
-1. Compile the shared libraries in the `libs` folder
-2. Type `make`
+    git clone --recurse-submodules https://github.com/jannisteunissen/reduced-discharge-model.git
+    cd reduced-discharge-model
+    make
 
 Running
 ==
