@@ -38,8 +38,10 @@ lib3d: $(BUILD_DIR_3D)/libsolver.a
 clean:
 	$(RM) *.so *.o *.mod *.a
 
-$(BUILD_DIR_2D)/m_solver_lib.o: INCDIRS=$(INCDIRS_2D) | $(AFIVO_LIB_2D)
-$(BUILD_DIR_3D)/m_solver_lib.o: INCDIRS=$(INCDIRS_3D) | $(AFIVO_LIB_3D)
+$(BUILD_DIR_2D)/m_solver_lib.o: INCDIRS=$(INCDIRS_2D)
+$(BUILD_DIR_2D)/m_solver_lib.o: $(AFIVO_LIB_2D)
+$(BUILD_DIR_3D)/m_solver_lib.o: INCDIRS=$(INCDIRS_3D)
+$(BUILD_DIR_3D)/m_solver_lib.o: $(AFIVO_LIB_3D)
 
 $(BUILD_DIR_2D)/libsolver.a: $(BUILD_DIR_2D)/m_solver_lib.o
 	$(RM) $@
