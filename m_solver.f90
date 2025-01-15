@@ -66,10 +66,10 @@ contains
     integer             :: max_lvl
 
     ! Refine uniformly
-    max_lvl = nint(log(uniform_grid_size(1) / real(tree%n_cell, dp)) / &
+    max_lvl = nint(log(uniform_grid_size(1) / real(tree%coarse_grid_size(1), dp)) / &
          log(2.0_dp)) + 1
 
-    if (any(tree%n_cell * 2**(max_lvl-1) /= uniform_grid_size)) &
+    if (any(tree%coarse_grid_size * 2**(max_lvl-1) /= uniform_grid_size)) &
          error stop "Incompatible grid size"
     call af_refine_up_to_lvl(tree, max_lvl)
   end subroutine use_uniform_grid

@@ -1,18 +1,17 @@
 #!/usr/bin/env python3
+"""Cocydimo: Conducting Cylinder Discharge Model"""
 
-from poisson_3d import m_solver as p3d
-import numpy as np
-from numpy.linalg import norm
 import copy
 import argparse
+import numpy as np
+from numpy.linalg import norm
 from scipy.spatial.transform import Rotation
 import model_lib as mlib
+from poisson_3d import m_solver as p3d
 
 parser = argparse.ArgumentParser(
     formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    description='Reduced discharge model')
-parser.add_argument('-run', type=int, default=0,
-                    help='Index of run to simulate')
+    description='Cocydimo: Conducting Cylinder Discharge Model')
 parser.add_argument('-r_scale', type=float, default=1.2,
                     help='Scale factor compared to electrodynamic radius')
 parser.add_argument('-domain_size', type=float, nargs=3,
@@ -48,6 +47,8 @@ parser.add_argument('-L_E_min', type=float, default=1e-4,
                     help='Minimum value of L_E')
 parser.add_argument('-c0_L_E_dx', type=float,
                     help='Correction factor for L_E w.r.t. data grid spacing')
+parser.add_argument('-k_eff_file', type=str, default='data/k_eff_air.txt',
+                    help='File with k_eff (1/s) vs electric field (V/m)')
 parser.add_argument('-siloname', type=str, default='output/simulation_3d',
                     help='Base filename for output Silo files')
 parser.add_argument('-rng_seed', type=int,
@@ -75,15 +76,24 @@ args = parser.parse_args()
 np.random.seed(args.rng_seed)
 
 
-def get_tau_branch(R, v):
-    tau_branch = args.c_b * R/v * (1 + (args.L_b/R)**2)
-    return tau_branch
+def get_tau_branch(radius, velocity):
+    """Get expected branching time for a streamer
+
+    :param radius: radius (m)
+    :param velocity: velocity (m/s)
+    :returns: expected branching time
+    """
+    return args.c_b * radius/velocity * (1 + (args.L_b/radius)**2)
 
 
 def find_orthogonal_unit_vector(y):
-    # Find arbitrary vector not parallel to y
-    vec1 = np.cross(y, np.random.uniform(-1., 1., 3))
-    return vec1 / np.linalg.norm(vec1)
+    """Randomly sample a unit vector orthogonal to y
+
+    :param y: input vector
+    :returns: unit vector orthogonal to y
+    """
+    orthvec = np.cross(y, np.random.uniform(-1., 1., 3))
+    return orthvec / norm(orthvec)
 
 
 p3d.set_rod_electrode(args.rod_r0, args.rod_r1, args.rod_radius)
@@ -103,14 +113,11 @@ p3d.solve(0.0)
 p3d.write_solution(f'{args.siloname}_{0:04d}', 0, 0.)
 
 # Set table with effective ionization rate
-table_fld, table_k_eff = np.loadtxt('k_eff_air.txt').T
+table_fld, table_k_eff = np.loadtxt(args.k_eff_file).T
 p3d.store_k_eff(table_fld[0], table_fld[-1], table_k_eff)
 
-# Locate Emax
-Emax, r_Emax = p3d.get_max_field_location()
-r_Emax[0:2] = args.rod_r1[0:2]
-
 # Get L_E to estimate initial streamer radius
+Emax, r_Emax = p3d.get_max_field_location()
 z, E, success = p3d.get_var_along_line('E_norm', r_Emax, [0., 0., 1.0],
                                        args.L_E_max, 2*args.L_E_max/dz)
 if not success:
