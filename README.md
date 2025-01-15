@@ -1,5 +1,5 @@
 Cocydimo: Conducting Cylinder Discharge Model
-====
+=======
 
 This code implements a reduced discharge model for streamer discharges, in which the channels are represented by a collection of conducting cylindrical segments. The conductivity and electric potential together evolve on a numerical mesh, as described in this [paper](https://arxiv.org/abs/2501.06093).
 
