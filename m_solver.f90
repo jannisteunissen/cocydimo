@@ -182,8 +182,8 @@ contains
                if (box%cc(IJK, i_time) < t - channel_delay) then
                   call get_k_eff(box%cc(IJK, i_E_norm), k_eff)
 
-                  ! Limit increase to a factor 2 per time step
-                  box%cc(IJK, i_dsigma) = min(1.0_dp, exp(dt * k_eff) - 1.0_dp) * &
+                  ! Use analytic expression for integral
+                  box%cc(IJK, i_dsigma) = exp(dt * k_eff) - 1.0_dp * &
                        box%cc(IJK, i_sigma)
                end if
 

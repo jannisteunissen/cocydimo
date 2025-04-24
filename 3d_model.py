@@ -41,6 +41,8 @@ parser.add_argument('-phi_bc', type=float, default=-4e4,
                     help='Applied potential (V)')
 parser.add_argument('-alpha', type=float, default=0.5,
                     help='Exponential smoothing coefficient')
+parser.add_argument('-channel_update_delay', type=float, default=1e-9,
+                    help='Delay for first updating channel conductivity')
 parser.add_argument('-L_E_max', type=float, default=5e-3,
                     help='Maximum value of L_E')
 parser.add_argument('-L_E_min', type=float, default=1e-4,
@@ -207,7 +209,7 @@ for step in range(1, args.nsteps+1):
 
     n_add = p3d.adjust_refinement()
     mlib.update_sigma(p3d.update_sigma, streamers, streamers_prev,
-                      time, args.dt, 1e-9, step == 1)
+                      time, args.dt, args.channel_update_delay, step == 1)
     p3d.solve(args.dt)
 
     time += args.dt
