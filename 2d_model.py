@@ -56,6 +56,8 @@ parser.add_argument('-rng_seed', type=int,
                     help='Seed for the random number generator')
 parser.add_argument('-memory_limit', type=float, default=0.1,
                     help='Memory limit (GB)')
+parser.add_argument('-steps_per_output', type=int, default=1,
+                    help='Write output every N steps')
 
 args = parser.parse_args()
 np.random.seed(args.rng_seed)
@@ -138,7 +140,11 @@ for step in range(1, args.nsteps+1):
     p2d.solve(args.dt)
 
     time += args.dt
-    p2d.write_solution(f'{args.siloname}_{step:04d}', step, time)
+
+    # Write output every N steps, with N = args.steps_per_output
+    if step % args.steps_per_output == 0:
+        i_output = step // args.steps_per_output
+        p2d.write_solution(f'{args.siloname}_{i_output:04d}', i_output, time)
 
     streamers = [s for s in streamers if s.keep]
     if len(streamers) == 0:
