@@ -179,11 +179,12 @@ contains
 
                ! Update channel conductivity, but only where the channel
                ! has already existed for some time
-               if (box%cc(IJK, i_time) < t - channel_delay) then
+               if (box%cc(IJK, i_time) < t - channel_delay .and. &
+                    box%cc(IJK, i_sigma) > 0.0_dp) then
                   call get_k_eff(box%cc(IJK, i_E_norm), k_eff)
 
                   ! Use analytic expression for integral
-                  box%cc(IJK, i_dsigma) = exp(dt * k_eff) - 1.0_dp * &
+                  box%cc(IJK, i_dsigma) = (exp(dt * k_eff) - 1.0_dp) * &
                        box%cc(IJK, i_sigma)
                end if
 
