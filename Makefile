@@ -36,7 +36,7 @@ lib3d: $(BUILD_DIR_3D)/libsolver.a
 	$(addprefix -l,$(LIBS)) --build-dir $(BUILD_DIR_3D)
 
 clean:
-	$(RM) *.so *.o *.mod *.a
+	$(RM) *.so *.o *.mod *.a $(BUILD_DIR_2D) $(BUILD_DIR_3D)
 
 $(BUILD_DIR_2D)/m_solver_lib.o: INCDIRS=$(INCDIRS_2D)
 $(BUILD_DIR_2D)/m_solver_lib.o: $(AFIVO_LIB_2D)
