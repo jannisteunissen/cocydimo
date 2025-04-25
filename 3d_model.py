@@ -173,9 +173,15 @@ for step in range(1, args.nsteps+1):
             s.v = rot.apply(s.v)
             s.is_branching = False
 
+        # Take the field ahead of the streamer. This field will tend to bend
+        # towards the background electric field.
+        v_hat = s.v/norm(s.v)
+        E_hat, success = p3d.get_field_vector_at(s.r + 1.5 * s.R * v_hat)
+        E_hat = E_hat/norm(E_hat)
+
         # Get samples of |E| ahead of the streamer to determine L_E
         r_tip = s.r + 0.5 * s.R * s.v/norm(s.v)
-        z, E, success = p3d.get_var_along_line('E_norm', r_tip, s.v,
+        z, E, success = p3d.get_var_along_line('E_norm', r_tip, E_hat,
                                                args.L_E_max, 2*args.L_E_max/dz)
         if not success:
             print('Could not sample L_E, removing streamer')
@@ -194,12 +200,6 @@ for step in range(1, args.nsteps+1):
             L_E = L_E_new
         else:
             L_E = args.alpha * L_E_new + (1 - args.alpha) * L_E
-
-        # Take the field ahead of the streamer. This field will tend to bend
-        # towards the background electric field.
-        v_hat = s.v/norm(s.v)
-        E_hat, success = p3d.get_field_vector_at(s.r + 1.5 * s.R * v_hat)
-        E_hat = E_hat/norm(E_hat)
 
         s.sigma = mlib.get_sigma(L_E)
         s.v = mlib.get_velocity(L_E) * E_hat
