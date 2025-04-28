@@ -1,4 +1,4 @@
-Cocydimo: Conducting Cylinder Discharge Model
+cocydimo: Conducting Cylinder Discharge Model
 =======
 
 This code implements a reduced discharge model for streamer discharges, in which the channels are represented by a collection of conducting cylindrical segments. The conductivity and electric potential together evolve on a numerical mesh, as described in this [paper](https://arxiv.org/abs/2501.06093).
@@ -13,7 +13,7 @@ To compile the code, the following packages are required:
 
 The code (including the [afivo library](https://github.com/MD-CWI/afivo)) can be downloaded with:
 
-    git clone --recurse-submodules https://github.com/jannisteunissen/reduced-discharge-model.git
+    git clone --recurse-submodules https://github.com/jannisteunissen/cocydimo.git
 
 Compiling for the first time can take some time:
 
