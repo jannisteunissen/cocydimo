@@ -31,8 +31,10 @@ parser.add_argument('-rod_radius', type=float, default=0.75e-3,
                     help='Radius of rod electrode')
 parser.add_argument('-nsteps', type=int, default=100,
                     help='How many steps to simulate')
-parser.add_argument('-n_initial_streamers', type=int, default=1,
+parser.add_argument('-n_initial_streamers', type=int, default=5,
                     help='How many streamers to start with')
+parser.add_argument('-r_start', type=float, nargs=3,
+                    help='Initial location of initial streamers')
 parser.add_argument('-dt', type=float, default=5e-10,
                     help='Time step (s)')
 parser.add_argument('-dz_data', type=float, default=30e-3/256,
@@ -58,7 +60,9 @@ parser.add_argument('-rng_seed', type=int,
 parser.add_argument('-c_b', type=float, default=15.,
                     help='Branching coeff. (larger means less branching)')
 parser.add_argument('-L_b', type=float, default=2.0e-4,
-                    help='Branching coeff. (thin streamers branch less')
+                    help='Branching coeff. (thin streamers branch less)')
+parser.add_argument('-branch_gamma', type=float, default=90.0,
+                    help='Angle (degrees) that affects branching')
 parser.add_argument('-refine_E', type=float, default=3e6,
                     help='Refine if E is above this value')
 parser.add_argument('-derefine_E', type=float, default=2e6,
@@ -123,9 +127,14 @@ p3d.write_solution(f'{args.siloname}_{0:04d}', 0, 0.)
 table_fld, table_k_eff = np.loadtxt(args.k_eff_file).T
 p3d.store_k_eff(table_fld[0], table_fld[-1], table_k_eff)
 
+if args.r_start is not None:
+    r_start = np.array(args.r_start)
+else:
+    Emax, r_start = p3d.get_max_field_location()
+    print(f'Streamers start from {r_start}')
+
 # Get L_E to estimate initial streamer radius
-Emax, r_Emax = p3d.get_max_field_location()
-z, E, success = p3d.get_var_along_line('E_norm', r_Emax, [0., 0., 1.0],
+z, E, success = p3d.get_var_along_line('E_norm', r_start, [0., 0., 1.0],
                                        args.L_E_max, 2*args.L_E_max/dz)
 if not success:
     raise RuntimeError('Interpolation error')
@@ -134,21 +143,16 @@ L_E = model.get_L_E(z, E, dz)
 # Start with a smaller radius to approximate initial phase
 radius0 = 0.5 * args.r_scale * model.get_radius(L_E)
 
-if args.n_initial_streamers == 1:
-    # Single streamer in the z-direction
-    streamers = [mlib.Streamer(r_Emax - [0., 0., radius0],
-                               [0., 0., 1.0], radius0, 0.0)]
-else:
-    # Start with multiple streamers in random directions
-    streamers = []
-    for i in range(args.n_initial_streamers):
-        # Sample multiple velocity directions
-        axis = find_orthogonal_unit_vector([0., 0., 1.0])
-        angle = np.random.uniform(0., 0.5*np.pi)
-        rot = Rotation.from_rotvec(axis * angle)
-        v_hat = rot.apply([0., 0., 1.0])
-        streamers.append(mlib.Streamer(r_Emax - [0., 0., radius0],
-                                       v_hat, radius0, 0.0))
+# Start with multiple streamers in random directions
+streamers = []
+for i in range(args.n_initial_streamers):
+    # Sample multiple velocity directions
+    axis = find_orthogonal_unit_vector([0., 0., 1.0])
+    angle = np.random.uniform(0., args.branch_gamma*np.pi/180.)
+    rot = Rotation.from_rotvec(axis * angle)
+    v_hat = rot.apply([0., 0., 1.0])
+    streamers.append(mlib.Streamer(r_start - [0., 0., radius0],
+                                   v_hat, radius0, 0.0))
 
 for step in range(1, args.nsteps+1):
     time = (step-1) * args.dt
@@ -160,7 +164,8 @@ for step in range(1, args.nsteps+1):
 
         if np.random.exponential(tau_branch) < args.dt:
             s.is_branching = True
-            s.branching_angle = np.random.uniform(0., 0.5*np.pi)
+            s.branching_angle = np.random.uniform(0., args.branch_gamma *
+                                                  np.pi/180.)
             s.branching_axis = find_orthogonal_unit_vector(s.v)
 
             new_branch = copy.copy(s)
