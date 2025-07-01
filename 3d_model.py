@@ -15,25 +15,25 @@ parser = argparse.ArgumentParser(
 parser.add_argument('-r_scale', type=float, default=1.2,
                     help='Scale factor compared to electrodynamic radius')
 parser.add_argument('-domain_size', type=float, nargs=3,
-                    default=[30e-3, 30e-3, 30e-3], help='Domain size')
+                    default=[80e-3, 80e-3, 80e-3], help='Domain size')
 parser.add_argument('-coarse_grid_size', type=int, nargs=3,
                     default=[16, 16, 16],
                     help='Size of coarse grid (Nx, Ny, Nz)')
 parser.add_argument('-box_size', type=int, default=8,
                     help='Size of boxes in afivo')
 parser.add_argument('-rod_r0', type=float, nargs=3,
-                    default=[15e-3, 15e-3, 0e-3],
+                    default=[40e-3, 40e-3, 0e-3],
                     help='First point of rod electrode')
 parser.add_argument('-rod_r1', type=float, nargs=3,
-                    default=[15e-3, 15e-3, 5e-3],
+                    default=[40e-3, 40e-3, 40e-3],
                     help='Second point of rod electrode')
 parser.add_argument('-rod_radius', type=float, default=0.75e-3,
                     help='Radius of rod electrode')
-parser.add_argument('-nsteps', type=int, default=2,
+parser.add_argument('-nsteps', type=int, default=100,
                     help='How many steps to simulate')
 parser.add_argument('-n_initial_streamers', type=int, default=1,
                     help='How many streamers to start with')
-parser.add_argument('-dt', type=float, default=2.5e-10,
+parser.add_argument('-dt', type=float, default=5e-10,
                     help='Time step (s)')
 parser.add_argument('-dz_data', type=float, default=30e-3/256,
                     help='Grid spacing used to obtain L_E from simulations')
@@ -47,7 +47,7 @@ parser.add_argument('-L_E_max', type=float, default=5e-3,
                     help='Maximum value of L_E')
 parser.add_argument('-L_E_min', type=float, default=1e-4,
                     help='Minimum value of L_E')
-parser.add_argument('-c0_L_E_dx', type=float,
+parser.add_argument('-c0_L_E_dx', type=float, default=0.75,
                     help='Correction factor for L_E w.r.t. data grid spacing')
 parser.add_argument('-k_eff_file', type=str, default='data/k_eff_air.txt',
                     help='File with k_eff (1/s) vs electric field (V/m)')
@@ -55,9 +55,9 @@ parser.add_argument('-siloname', type=str, default='output/simulation_3d',
                     help='Base filename for output Silo files')
 parser.add_argument('-rng_seed', type=int,
                     help='Seed for the random number generator')
-parser.add_argument('-c_b', type=float, default=10.,
+parser.add_argument('-c_b', type=float, default=15.,
                     help='Branching coeff. (larger means less branching)')
-parser.add_argument('-L_b', type=float, default=1.0e-4,
+parser.add_argument('-L_b', type=float, default=2.0e-4,
                     help='Branching coeff. (thin streamers branch less')
 parser.add_argument('-refine_E', type=float, default=3e6,
                     help='Refine if E is above this value')
@@ -65,11 +65,11 @@ parser.add_argument('-derefine_E', type=float, default=2e6,
                     help='Derefine if E is below this value')
 parser.add_argument('-derefine_nlevels', type=int, default=1,
                     help='Derefine at most this many levels')
-parser.add_argument('-min_dx', type=float, default=5e-5,
+parser.add_argument('-min_dx', type=float, default=1e-4,
                     help='Minimum allowed grid spacing')
-parser.add_argument('-max_dx', type=float, default=1e-3,
+parser.add_argument('-max_dx', type=float, default=2e-3,
                     help='Maximum allowed grid spacing')
-parser.add_argument('-max_dx_electrode', type=float, default=2e-4,
+parser.add_argument('-max_dx_electrode', type=float, default=8e-4,
                     help='Maximum allowed grid spacing around electrode')
 parser.add_argument('-memory_limit', type=float, default=8.0,
                     help='Memory limit (GB)')
@@ -77,6 +77,9 @@ parser.add_argument('-steps_per_output', type=int, default=1,
                     help='Write output every N steps')
 
 args = parser.parse_args()
+
+model = mlib.AirStreamerModel(c0=args.c0_L_E_dx, dz0=args.dz_data)
+
 np.random.seed(args.rng_seed)
 
 
@@ -126,10 +129,10 @@ z, E, success = p3d.get_var_along_line('E_norm', r_Emax, [0., 0., 1.0],
                                        args.L_E_max, 2*args.L_E_max/dz)
 if not success:
     raise RuntimeError('Interpolation error')
-L_E = mlib.get_high_field_length(z, E, args.c0_L_E_dx, args.dz_data, dz)
+L_E = model.get_L_E(z, E, dz)
 
 # Start with a smaller radius to approximate initial phase
-radius0 = 0.5 * args.r_scale * mlib.get_radius(L_E)
+radius0 = 0.5 * args.r_scale * model.get_radius(L_E)
 
 if args.n_initial_streamers == 1:
     # Single streamer in the z-direction
@@ -188,8 +191,7 @@ for step in range(1, args.nsteps+1):
             s.keep = False
             continue
 
-        L_E_new = mlib.get_high_field_length(z, E, args.c0_L_E_dx,
-                                             args.dz_data, dz)
+        L_E_new = model.get_L_E(z, E, dz)
 
         if L_E_new < args.L_E_min:
             print('L_E too small, removing streamer')
@@ -201,10 +203,10 @@ for step in range(1, args.nsteps+1):
         else:
             L_E = args.alpha * L_E_new + (1 - args.alpha) * L_E
 
-        s.sigma = mlib.get_sigma(L_E)
-        s.v = mlib.get_velocity(L_E) * E_hat
+        s.sigma = model.get_sigma(L_E)
+        s.v = model.get_velocity(L_E) * E_hat
 
-        dR = min(args.r_scale * mlib.get_radius(L_E) - s.R,
+        dR = min(args.r_scale * model.get_radius(L_E) - s.R,
                  norm(s.v) * args.dt)
         s.R = s.R + dR
         s.r = s.r + s.v * (args.dt - 0.99 * dR/norm(s.v))

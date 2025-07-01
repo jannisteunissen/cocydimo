@@ -46,7 +46,7 @@ parser.add_argument('-L_E_max', type=float, default=5e-3,
                     help='Maximum value of L_E')
 parser.add_argument('-L_E_min', type=float, default=1e-4,
                     help='Minimum value of L_E')
-parser.add_argument('-c0_L_E_dx', type=float,
+parser.add_argument('-c0_L_E_dx', type=float, default=0.75,
                     help='Correction factor for L_E w.r.t. data grid spacing')
 parser.add_argument('-k_eff_file', type=str, default='data/k_eff_air.txt',
                     help='File with k_eff (1/s) vs electric field (V/m)')
@@ -60,6 +60,9 @@ parser.add_argument('-steps_per_output', type=int, default=1,
                     help='Write output every N steps')
 
 args = parser.parse_args()
+
+model = mlib.AirStreamerModel(c0=args.c0_L_E_dx, dz0=args.dz_data)
+
 np.random.seed(args.rng_seed)
 
 p2d.set_rod_electrode(args.rod_r0, args.rod_r1, args.rod_radius)
@@ -85,10 +88,10 @@ z, E, success = p2d.get_var_along_line('E_norm', [0.0, r_Emax[1]], [0., 1.0],
 if not success:
     raise RuntimeError('Interpolation error')
 
-L_E = mlib.get_high_field_length(z, E, args.c0_L_E_dx, args.dz_data, dz)
+L_E = model.get_L_E(z, E, dz)
 
 # Start with a smaller radius to approximate initial phase
-radius0 = 0.5 * args.r_scale * mlib.get_radius(L_E)
+radius0 = 0.5 * args.r_scale * model.get_radius(L_E)
 
 # Single streamer in the z-direction
 streamers = [mlib.Streamer([0.0, r_Emax[1] - radius0],
@@ -111,8 +114,7 @@ for step in range(1, args.nsteps+1):
             s.keep = False
             continue
 
-        L_E_new = mlib.get_high_field_length(z, E, args.c0_L_E_dx,
-                                             args.dz_data, dz)
+        L_E_new = model.get_L_E(z, E, dz)
 
         if L_E_new < args.L_E_min:
             print(f'L_E too small {L_E_new:.2e}, removing streamer')
@@ -127,10 +129,10 @@ for step in range(1, args.nsteps+1):
         # Propagation in +z direction
         E_hat = np.array([0.0, 1.0])
 
-        s.sigma = mlib.get_sigma(L_E)
-        s.v = mlib.get_velocity(L_E) * E_hat
+        s.sigma = model.get_sigma(L_E)
+        s.v = model.get_velocity(L_E) * E_hat
 
-        dR = min(args.r_scale * mlib.get_radius(L_E) - s.R,
+        dR = min(args.r_scale * model.get_radius(L_E) - s.R,
                  norm(s.v) * args.dt)
         s.R = s.R + dR
         s.r = s.r + s.v * (args.dt - 0.99 * dR/norm(s.v))
