@@ -25,6 +25,8 @@ class Streamer():
         self.v = np.array(v)
         self.R = R
         self.sigma = sigma
+        self.L_E = 0.0
+        self.n_steps = 0
         self.keep = True
         self.is_branching = False
         self.branching_angle = None
@@ -34,7 +36,8 @@ class Streamer():
         """Return a string representation of the Streamer instance."""
         with np.printoptions(formatter={'float': lambda x: format(x, '.2E')}):
             r = f'Streamer(r = {self.r}, v = {self.v}, ' + \
-                f'sigma = {self.sigma:.2e}, R = {self.R:.2e})'
+                f'sigma = {self.sigma:.2e}, R = {self.R:.2e}, ' + \
+                f'steps = {self.n_steps})'
         return r
 
 

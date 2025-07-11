@@ -137,7 +137,7 @@ else:
 z, E, success = p3d.get_var_along_line('E_norm', r_start, [0., 0., 1.0],
                                        args.L_E_max, 2*args.L_E_max/dz)
 if not success:
-    raise RuntimeError('Interpolation error')
+    raise RuntimeError('Interpolation error at r_start')
 L_E = model.get_L_E(z, E, dz)
 
 # Start with a smaller radius to approximate initial phase
@@ -170,6 +170,7 @@ for step in range(1, args.nsteps+1):
 
             new_branch = copy.copy(s)
             new_branch.branching_angle -= np.pi/2
+            new_branch.n_steps = 0
             new_branches.append(new_branch)
 
     streamers = streamers + new_branches
@@ -185,29 +186,37 @@ for step in range(1, args.nsteps+1):
         # towards the background electric field.
         v_hat = s.v/norm(s.v)
         E_hat, success = p3d.get_field_vector_at(s.r + 1.5 * s.R * v_hat)
+
+        if not success:
+            print('Could not sample E_hat, removing streamer')
+            s.keep = False
+            continue
+
         E_hat = E_hat/norm(E_hat)
 
         # Get samples of |E| ahead of the streamer to determine L_E
         r_tip = s.r + 0.5 * s.R * s.v/norm(s.v)
         z, E, success = p3d.get_var_along_line('E_norm', r_tip, E_hat,
                                                args.L_E_max, 2*args.L_E_max/dz)
-        if not success:
-            print('Could not sample L_E, removing streamer')
-            s.keep = False
-            continue
 
-        L_E_new = model.get_L_E(z, E, dz)
+        if success:
+            L_E_new = model.get_L_E(z, E, dz)
+        else:
+            # Use previous value
+            L_E_new = s.L_E
 
         if L_E_new < args.L_E_min:
             print('L_E too small, removing streamer')
             s.keep = False
             continue
 
-        if step == 1:
+        if s.n_steps == 0:
+            # At the first step, use only the new field
             L_E = L_E_new
         else:
-            L_E = args.alpha * L_E_new + (1 - args.alpha) * L_E
+            L_E = args.alpha * L_E_new + (1 - args.alpha) * s.L_E
 
+        s.L_E = L_E
         s.sigma = model.get_sigma(L_E)
         s.v = model.get_velocity(L_E) * E_hat
 
@@ -215,6 +224,7 @@ for step in range(1, args.nsteps+1):
                  norm(s.v) * args.dt)
         s.R = s.R + dR
         s.r = s.r + s.v * (args.dt - 0.99 * dR/norm(s.v))
+        s.n_steps += 1
 
     n_add = p3d.adjust_refinement()
     mlib.update_sigma(p3d.update_sigma, streamers, streamers_prev,
