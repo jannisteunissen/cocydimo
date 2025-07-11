@@ -42,6 +42,9 @@ parser.add_argument('-alpha', type=float, default=0.5,
                     help='Exponential smoothing coefficient')
 parser.add_argument('-channel_update_delay', type=float, default=1e-9,
                     help='Delay for first updating channel conductivity')
+parser.add_argument('-channel_allow_ionization', action='store_true',
+                    help='Allow increasing channel conductivity, this can be '
+                    'problematic near domain boundaries)')
 parser.add_argument('-L_E_max', type=float, default=5e-3,
                     help='Maximum value of L_E')
 parser.add_argument('-L_E_min', type=float, default=1e-4,
@@ -79,6 +82,9 @@ p2d.write_solution(f'{args.siloname}_{0:04d}', 0, 0.)
 
 # Set table with effective ionization rate
 table_fld, table_k_eff = np.loadtxt(args.k_eff_file).T
+if not args.channel_allow_ionization:
+    table_k_eff = np.minimum(table_k_eff, 0.0)
+
 p2d.store_k_eff(table_fld[0], table_fld[-1], table_k_eff)
 
 # Get L_E to estimate initial streamer radius
