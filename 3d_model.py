@@ -70,17 +70,17 @@ parser.add_argument('-L_b', type=float, default=2.0e-4,
 parser.add_argument('-branch_gamma', type=float, default=90.0,
                     help='Angle (degrees) that affects branching')
 parser.add_argument('-refine_E', type=float, default=3e6,
-                    help='Refine if E is above this value')
+                    help='Refine if E is above this value (V/m)')
 parser.add_argument('-derefine_E', type=float, default=2e6,
-                    help='Derefine if E is below this value')
+                    help='Derefine if E is below this value (V/m)')
 parser.add_argument('-derefine_nlevels', type=int, default=1,
                     help='Derefine at most this many levels')
 parser.add_argument('-min_dx', type=float, default=1e-4,
-                    help='Minimum allowed grid spacing')
+                    help='Minimum allowed grid spacing (m)')
 parser.add_argument('-max_dx', type=float, default=2e-3,
-                    help='Maximum allowed grid spacing')
+                    help='Maximum allowed grid spacing (m)')
 parser.add_argument('-max_dx_electrode', type=float, default=8e-4,
-                    help='Maximum allowed grid spacing around electrode')
+                    help='Maximum allowed grid spacing around electrode (m)')
 parser.add_argument('-memory_limit', type=float, default=8.0,
                     help='Memory limit (GB)')
 parser.add_argument('-steps_per_output', type=int, default=1,
