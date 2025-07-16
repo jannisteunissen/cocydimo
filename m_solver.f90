@@ -129,7 +129,7 @@ contains
 
   ! Update sigma (conductivity)
   subroutine update_sigma(n_streamers, r0, r1, sigma0, sigma1, radius0, radius1, &
-       t, dt, channel_delay, first_step)
+       t, dt, channel_delay, first_step, max_sigma)
     integer, intent(in)  :: n_streamers
     real(dp), intent(in) :: r0(n_streamers, fndims), r1(n_streamers, fndims)
     real(dp), intent(in) :: sigma0(n_streamers), sigma1(n_streamers)
@@ -138,6 +138,8 @@ contains
     real(dp), intent(in) :: dt
     real(dp), intent(in) :: channel_delay
     logical, intent(in)  :: first_step
+    !> Limit sigma to this value when updating channel conductivity
+    real(dp), intent(in) :: max_sigma
     integer              :: lvl, n, id, IJK, nc, ix
     real(dp)             :: r(fndims), dist_vec(fndims), r_dist, frac
     real(dp)             :: k_eff, dsigma
@@ -186,6 +188,8 @@ contains
                   ! Use analytic expression for integral
                   box%cc(IJK, i_dsigma) = (exp(dt * k_eff) - 1.0_dp) * &
                        box%cc(IJK, i_sigma)
+                  box%cc(IJK, i_dsigma) = min(box%cc(IJK, i_dsigma), &
+                       max_sigma - box%cc(IJK, i_sigma))
                end if
 
             end do; CLOSE_DO

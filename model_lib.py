@@ -174,7 +174,7 @@ class AirStreamerModel():
 
 
 def update_sigma(method, streamers_t1, streamers_t0, time, dt,
-                 channel_delay, first_step):
+                 channel_delay, first_step, max_sigma):
     """
     Update the conductivity for streamers on a grid based on current and previous time steps.
 
@@ -187,6 +187,7 @@ def update_sigma(method, streamers_t1, streamers_t0, time, dt,
         channel_delay: Delay time for updating conductivity within a channel,
                        accounting for processes such as attachment.
         first_step: Boolean indicating if this is the first time step of the simulation.
+        max_sigma: Limit sigma to this value when updating channel conductivity
 
     Raises:
         ValueError: If the number of streamers at the current and previous time steps do not match.
@@ -219,4 +220,4 @@ def update_sigma(method, streamers_t1, streamers_t0, time, dt,
         radius_prev[i] = streamers_t0[i].R
 
     method(r_prev, r, sigma_prev, sigma, radius_prev, radius, time,
-           dt, channel_delay, first_step)
+           dt, channel_delay, first_step, max_sigma)

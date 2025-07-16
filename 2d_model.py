@@ -14,41 +14,44 @@ parser = argparse.ArgumentParser(
 parser.add_argument('-r_scale', type=float, default=1.2,
                     help='Scale factor compared to electrodynamic radius')
 parser.add_argument('-domain_size', type=float, nargs=2,
-                    default=[30e-3, 30e-3], help='Domain size')
+                    default=[30e-3, 30e-3], help='Domain size (m)')
 parser.add_argument('-coarse_grid_size', type=int, nargs=2,
                     default=[16, 16],
                     help='Size of coarse grid (Nr, Nz)')
 parser.add_argument('-grid_size', type=int, nargs=2, default=[256, 256],
                     help='Size of computational grid (Nr, Nz)')
 parser.add_argument('-box_size', type=int, default=8,
-                    help='Size of boxes in afivo')
+                    help='Size of boxes in afivo (#cells)')
 parser.add_argument('-rod_r0', type=float, nargs=2,
                     default=[0.0e-3, 0.0e-3],
-                    help='First point of rod electrode')
+                    help='First point of rod electrode (m)')
 parser.add_argument('-rod_r1', type=float, nargs=2,
                     default=[0.0, 5.0e-3],
-                    help='Second point of rod electrode')
+                    help='Second point of rod electrode (m)')
 parser.add_argument('-rod_radius', type=float, default=0.75e-3,
-                    help='Radius of rod electrode')
-parser.add_argument('-nsteps', type=int, default=10,
+                    help='Radius of rod electrode (m)')
+parser.add_argument('-n_steps', type=int, default=10,
                     help='How many steps to simulate')
 parser.add_argument('-dt', type=float, default=2.5e-10,
                     help='Time step (s)')
 parser.add_argument('-dz_data', type=float, default=30e-3/256,
-                    help='Grid spacing used to obtain L_E from simulations')
+                    help='Grid spacing used to obtain L_E from dataset (m)')
 parser.add_argument('-phi_bc', type=float, default=-4e4,
                     help='Applied potential (V)')
 parser.add_argument('-alpha', type=float, default=0.5,
                     help='Exponential smoothing coefficient')
 parser.add_argument('-channel_update_delay', type=float, default=1e-9,
-                    help='Delay for first updating channel conductivity')
-parser.add_argument('-channel_allow_ionization', action='store_true',
-                    help='Allow increasing channel conductivity, this can be '
+                    help='Delay for first updating channel conductivity (s)')
+parser.add_argument('-channel_no_ionization', action='store_true',
+                    help='Do not increase channel conductivity, which can be '
                     'problematic near domain boundaries)')
+parser.add_argument('-channel_max_sigma', type=float, default=5.0,
+                    help='Limit growth of volume conductivity to this value '
+                    'to prevent issues at domain boundaries [A/(m V)]')
 parser.add_argument('-L_E_max', type=float, default=5e-3,
-                    help='Maximum value of L_E')
+                    help='Maximum value of L_E (m)')
 parser.add_argument('-L_E_min', type=float, default=1e-4,
-                    help='Minimum value of L_E')
+                    help='Minimum value of L_E (m)')
 parser.add_argument('-c0_L_E_dx', type=float, default=0.75,
                     help='Correction factor for L_E w.r.t. data grid spacing')
 parser.add_argument('-k_eff_file', type=str, default='data/k_eff_air.txt',
@@ -82,7 +85,7 @@ p2d.write_solution(f'{args.siloname}_{0:04d}', 0, 0.)
 
 # Set table with effective ionization rate
 table_fld, table_k_eff = np.loadtxt(args.k_eff_file).T
-if not args.channel_allow_ionization:
+if args.channel_no_ionization:
     table_k_eff = np.minimum(table_k_eff, 0.0)
 
 p2d.store_k_eff(table_fld[0], table_fld[-1], table_k_eff)
@@ -103,7 +106,7 @@ radius0 = 0.5 * args.r_scale * model.get_radius(L_E)
 streamers = [mlib.Streamer([0.0, r_Emax[1] - radius0],
                            [0., 1.0], radius0, 0.0)]
 
-for step in range(1, args.nsteps+1):
+for step in range(1, args.n_steps+1):
     time = (step-1) * args.dt
     print(f'{step:4d} t = {time*1e9:.1f} ns')
 
@@ -144,7 +147,8 @@ for step in range(1, args.nsteps+1):
         s.r = s.r + s.v * (args.dt - 0.99 * dR/norm(s.v))
 
     mlib.update_sigma(p2d.update_sigma, streamers, streamers_prev,
-                      time, args.dt, args.channel_update_delay, step == 1)
+                      time, args.dt, args.channel_update_delay, step == 1,
+                      args.channel_max_sigma)
     p2d.solve(args.dt)
 
     time += args.dt
