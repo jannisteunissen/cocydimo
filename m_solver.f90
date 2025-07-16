@@ -9,12 +9,15 @@ contains
 
   ! Initialize the computational domain
   subroutine initialize_domain(domain_len, coarse_grid_size, box_size, &
-       voltage, mem_limit_gb)
+       voltage, mem_limit_gb, write_eps, write_time, write_rhs)
     real(dp), intent(in) :: domain_len(fndims)       ! Domain size (m)
     integer, intent(in)  :: coarse_grid_size(fndims) ! Coarse grid size
     integer, intent(in)  :: box_size                 ! Size of grid boxes
     real(dp), intent(in) :: voltage                  ! Applied voltage (V)
     real(dp), intent(in) :: mem_limit_gb             ! Memory limit (GB)
+    logical, intent(in)  :: write_eps                ! Write epsilon to output
+    logical, intent(in)  :: write_time               ! Write time to output
+    logical, intent(in)  :: write_rhs                ! Write rhs to output
     integer              :: coord_t
 
     coord_t = af_xyz
@@ -23,14 +26,14 @@ contains
     applied_voltage = voltage
 
     call af_add_cc_variable(tree, "phi", ix=mg%i_phi)
-    call af_add_cc_variable(tree, "rhs", ix=mg%i_rhs)
+    call af_add_cc_variable(tree, "rhs", ix=mg%i_rhs, write_out=write_rhs)
     call af_add_cc_variable(tree, "tmp", ix=mg%i_tmp, write_out=.false.)
-    call af_add_cc_variable(tree, "eps", ix=tree%mg_i_eps)
+    call af_add_cc_variable(tree, "eps", ix=tree%mg_i_eps, write_out=write_eps)
     call af_add_cc_variable(tree, "sigma", ix=i_sigma)
     call af_add_cc_variable(tree, "dsigma", ix=i_dsigma, write_out=.false.)
     call af_add_cc_variable(tree, "phi", ix=mg%i_phi)
     call af_add_cc_variable(tree, "electric_fld", ix=i_E_norm)
-    call af_add_cc_variable(tree, "time", ix=i_time)
+    call af_add_cc_variable(tree, "time", ix=i_time, write_out=write_time)
     call af_add_fc_variable(tree, "E_vec", ix=i_E_vec)
 
     call af_set_cc_methods(tree, tree%mg_i_eps, af_bc_neumann_zero)

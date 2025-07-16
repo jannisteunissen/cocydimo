@@ -4,6 +4,8 @@
 import copy
 import argparse
 import numpy as np
+import json
+from time import perf_counter
 from numpy.linalg import norm
 from scipy.spatial.transform import Rotation
 import model_lib as mlib
@@ -61,6 +63,12 @@ parser.add_argument('-k_eff_file', type=str, default='data/k_eff_air.txt',
                     help='File with k_eff (1/s) vs electric field (V/m)')
 parser.add_argument('-siloname', type=str, default='output/simulation_3d',
                     help='Base filename for output Silo files')
+parser.add_argument('-write_eps', action='store_true',
+                    help='Write epsilon (of Poisson eq.) to output')
+parser.add_argument('-write_time', action='store_true',
+                    help='Write time that channel was added to output')
+parser.add_argument('-write_rhs', action='store_true',
+                    help='Write r.h.s. of Poisson eq. to output')
 parser.add_argument('-rng_seed', type=int,
                     help='Seed for the random number generator')
 parser.add_argument('-c_b', type=float, default=15.,
@@ -83,10 +91,17 @@ parser.add_argument('-max_dx_electrode', type=float, default=8e-4,
                     help='Maximum allowed grid spacing around electrode (m)')
 parser.add_argument('-memory_limit', type=float, default=8.0,
                     help='Memory limit (GB)')
+parser.add_argument('-print_performance', action='store_true',
+                    help='Show performance information')
 parser.add_argument('-steps_per_output', type=int, default=1,
                     help='Write output every N steps')
 
 args = parser.parse_args()
+
+# Save settings
+with open(f'{args.siloname}.cfg', 'w') as f:
+    json.dump(args.__dict__, f, indent=2)
+
 model = mlib.AirStreamerModel(c0=args.c0_L_E_dx, dz0=args.dz_data)
 
 np.random.seed(args.rng_seed)
@@ -115,7 +130,8 @@ def find_orthogonal_unit_vector(y):
 p3d.set_rod_electrode(args.rod_r0, args.rod_r1, args.rod_radius)
 
 p3d.initialize_domain(args.domain_size, args.coarse_grid_size,
-                      args.box_size, args.phi_bc, args.memory_limit)
+                      args.box_size, args.phi_bc, args.memory_limit,
+                      args.write_eps, args.write_time, args.write_rhs)
 
 p3d.set_refinement(args.refine_E, args.derefine_E,
                    args.min_dx, args.max_dx,
@@ -162,9 +178,22 @@ for i in range(args.n_initial_streamers):
     streamers.append(mlib.Streamer(r_start - [0., 0., radius0],
                                    v_hat, radius0, 0.0))
 
+wct_refinement = 0.0
+wct_update_sigma = 0.0
+wct_poisson = 0.0
+wct_output = 0.0
+t_start = perf_counter()
+
 for step in range(1, args.n_steps+1):
     time = (step-1) * args.dt
     print(f'{step:4d} t = {time*1e9:.1f} ns n_streamers = {len(streamers)}')
+
+    if args.print_performance:
+        t_total = perf_counter() - t_start
+        print(f' refinement: {1e2*wct_refinement/t_total:.2f}% '
+              f'update_sigma: {1e2*wct_update_sigma/t_total:.2f}% '
+              f'poisson: {1e2*wct_poisson/t_total:.2f}% '
+              f'output: {1e2*wct_output/t_total:.2f}%')
 
     new_branches = []
     for s in streamers:
@@ -234,11 +263,20 @@ for step in range(1, args.n_steps+1):
         s.r = s.r + s.v * (args.dt - 0.99 * dR/norm(s.v))
         s.n_steps += 1
 
+    t0 = perf_counter()
     n_add = p3d.adjust_refinement()
+    t1 = perf_counter()
+    wct_refinement += t1 - t0
+
     mlib.update_sigma(p3d.update_sigma, streamers, streamers_prev,
                       time, args.dt, args.channel_update_delay, step == 1,
                       args.channel_max_sigma)
+    t0 = perf_counter()
+    wct_update_sigma += t0 - t1
+
     p3d.solve(args.dt)
+    t1 = perf_counter()
+    wct_poisson += t1 - t0
 
     time += args.dt
 
@@ -246,6 +284,9 @@ for step in range(1, args.n_steps+1):
     if step % args.steps_per_output == 0:
         i_output = step // args.steps_per_output
         p3d.write_solution(f'{args.siloname}_{i_output:04d}', i_output, time)
+
+    t0 = perf_counter()
+    wct_output += t0 - t1
 
     streamers = [s for s in streamers if s.keep]
     if len(streamers) == 0:

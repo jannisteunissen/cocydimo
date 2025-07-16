@@ -4,6 +4,7 @@
 import copy
 import argparse
 import numpy as np
+import json
 from numpy.linalg import norm
 import model_lib as mlib
 from poisson_2d import m_solver as p2d
@@ -58,6 +59,12 @@ parser.add_argument('-k_eff_file', type=str, default='data/k_eff_air.txt',
                     help='File with k_eff (1/s) vs electric field (V/m)')
 parser.add_argument('-siloname', type=str, default='output/simulation_2d',
                     help='Base filename for output Silo files')
+parser.add_argument('-write_eps', action='store_true',
+                    help='Write epsilon (of Poisson eq.) to output')
+parser.add_argument('-write_time', action='store_true',
+                    help='Write time that channel was added to output')
+parser.add_argument('-write_rhs', action='store_true',
+                    help='Write r.h.s. of Poisson eq. to output')
 parser.add_argument('-rng_seed', type=int,
                     help='Seed for the random number generator')
 parser.add_argument('-memory_limit', type=float, default=0.1,
@@ -67,13 +74,18 @@ parser.add_argument('-steps_per_output', type=int, default=1,
 
 args = parser.parse_args()
 
+# Save settings
+with open(f'{args.siloname}.cfg', 'w') as f:
+    json.dump(args.__dict__, f, indent=2)
+
 model = mlib.AirStreamerModel(c0=args.c0_L_E_dx, dz0=args.dz_data)
 
 np.random.seed(args.rng_seed)
 
 p2d.set_rod_electrode(args.rod_r0, args.rod_r1, args.rod_radius)
 p2d.initialize_domain(args.domain_size, args.coarse_grid_size,
-                      args.box_size, args.phi_bc, args.memory_limit)
+                      args.box_size, args.phi_bc, args.memory_limit,
+                      args.write_eps, args.write_time, args.write_rhs)
 p2d.use_uniform_grid(args.grid_size)
 
 dz = p2d.get_finest_grid_spacing()
