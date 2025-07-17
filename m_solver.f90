@@ -143,22 +143,45 @@ contains
     logical, intent(in)  :: first_step
     !> Limit sigma to this value when updating channel conductivity
     real(dp), intent(in) :: max_sigma
-    integer              :: lvl, n, id, IJK, nc, ix
+    integer              :: lvl, n, id, IJK, nc, ix, jx
     real(dp)             :: r(fndims), dist_vec(fndims), r_dist, frac
-    real(dp)             :: k_eff, dsigma
+    real(dp)             :: k_eff, dsigma, box_rmax(fndims), length, radius
+    real(dp)             :: r_min(fndims, n_streamers)
+    real(dp)             :: r_max(fndims, n_streamers)
+    integer              :: n_in_box, ix_in_box(n_streamers)
 
     nc = tree%n_cell
+
+    ! Determine the extent of channels, with some margin
+    do ix = 1, n_streamers
+       length = norm2(r1(ix, :) - r0(ix, :))
+       radius = max(radius0(ix), radius1(ix))
+       r_min(:, ix) = min(r0(ix, :), r1(ix, :)) - radius - 0.5_dp * length
+       r_max(:, ix) = max(r0(ix, :), r1(ix, :)) + radius + 0.5_dp * length
+    end do
 
     if (.not. allocated(k_eff_table)) error stop "Call store_k_eff first"
 
     !$omp parallel private(lvl, n, id, IJK, r, dist_vec, r_dist, &
-    !$omp &frac, ix, k_eff, dsigma)
+    !$omp &frac, ix, k_eff, dsigma, box_rmax, n_in_box, ix_in_box, jx)
     do lvl = 1, tree%highest_lvl
        !$omp do
        do n = 1, size(tree%lvls(lvl)%leaves)
           id = tree%lvls(lvl)%leaves(n)
 
           associate (box => tree%boxes(id))
+
+            ! Determine which channels can possibly lie in the box
+            n_in_box = 0
+            box_rmax = box%r_min + nc * box%dr
+            do ix = 1, n_streamers
+               if (all(r_max(:, ix) >= box%r_min .and. &
+                    r_min(:, ix) <= box_rmax)) then
+                  n_in_box = n_in_box + 1
+                  ix_in_box(n_in_box) = ix
+               end if
+            end do
+
             do KJI_DO(1, nc)
                box%cc(IJK, i_dsigma) = 0.0_dp
 
@@ -166,7 +189,8 @@ contains
 
                r = af_r_cc(box, [IJK])
 
-               do ix = 1, n_streamers
+               do jx = 1, n_in_box
+                  ix = ix_in_box(jx)
                   call dist_vec_line(r, r0(ix, :), r1(ix, :), &
                        fndims, dist_vec, r_dist, frac)
 
