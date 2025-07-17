@@ -74,9 +74,9 @@ parser.add_argument('-write_rhs', action='store_true',
 parser.add_argument('-rng_seed', type=int,
                     help='Seed for the random number generator')
 parser.add_argument('-c_b', type=float, default=15.,
-                    help='Branching coeff. (larger means less branching)')
+                    help='Branching coeff. - larger means less branching')
 parser.add_argument('-L_b', type=float, default=2.0e-4,
-                    help='Branching coeff. (thin streamers branch less)')
+                    help='Branching coeff. (m) - thin streamers branch less')
 parser.add_argument('-branch_gamma', type=float, default=90.0,
                     help='Angle (degrees) that affects branching')
 parser.add_argument('-refine_E', type=float, default=3e6,
