@@ -99,8 +99,10 @@ parser.add_argument('-steps_per_output', type=int, default=1,
 args = parser.parse_args()
 
 # Save settings
-with open(f'{args.siloname}.cfg', 'w') as f:
+fname = f'{args.siloname}.json'
+with open(fname, 'w') as f:
     json.dump(args.__dict__, f, indent=2)
+    print(f'Wrote settings to {fname}')
 
 model = mlib.AirStreamerModel(c0=args.c0_L_E_dx, dz0=args.dz_data)
 
