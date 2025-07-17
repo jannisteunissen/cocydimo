@@ -57,6 +57,8 @@ parser.add_argument('-c0_L_E_dx', type=float, default=0.75,
                     help='Correction factor for L_E w.r.t. data grid spacing')
 parser.add_argument('-k_eff_file', type=str, default='data/k_eff_air.txt',
                     help='File with k_eff (1/s) vs electric field (V/m)')
+parser.add_argument('-poisson_rtol', type=float, default=1e-5,
+                    help='Relative tolerance for Poisson solver')
 parser.add_argument('-siloname', type=str, default='output/simulation_2d',
                     help='Base filename for output Silo files')
 parser.add_argument('-write_eps', action='store_true',
@@ -94,7 +96,7 @@ dz = p2d.get_finest_grid_spacing()
 print(f'Minimum grid spacing: {dz:.2e}')
 
 # Compute initial solution
-p2d.solve(0.0)
+p2d.solve(0.0, args.poisson_rtol)
 p2d.write_solution(f'{args.siloname}_{0:04d}', 0, 0.)
 
 # Set table with effective ionization rate
@@ -163,7 +165,7 @@ for step in range(1, args.n_steps+1):
     mlib.update_sigma(p2d.update_sigma, streamers, streamers_prev,
                       time, args.dt, args.channel_update_delay, step == 1,
                       args.channel_max_sigma)
-    p2d.solve(args.dt)
+    p2d.solve(args.dt, args.poisson_rtol)
 
     time += args.dt
 

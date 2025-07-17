@@ -77,15 +77,16 @@ contains
     call af_refine_up_to_lvl(tree, max_lvl)
   end subroutine use_uniform_grid
 
-  ! Set parameters for grid refinement
+  ! Set initial grid refinement
   subroutine set_refinement(refine_field, derefine_field, &
-       min_dx, max_dx, electrode_max_dx, derefine_levels)
+       min_dx, max_dx, electrode_max_dx, derefine_levels, rtol)
     real(dp), intent(in) :: refine_field     ! Refine when the field is above this value
     real(dp), intent(in) :: derefine_field   ! Derefine when the field is below this value
     real(dp), intent(in) :: min_dx           ! Minimum allowed grid spacing
     real(dp), intent(in) :: max_dx           ! Maximum allowed grid spacing
     real(dp), intent(in) :: electrode_max_dx ! Maximum grid spacing around electrode
     integer, intent(in)  :: derefine_levels  ! How many levels can be derefined
+    real(dp), intent(in) :: rtol             ! Relative tolerance for Poisson solver
     integer              :: n_add, n, n_its
     real(dp)             :: residu
 
@@ -97,12 +98,15 @@ contains
     ! Finest dx is between min_dx and 2*min_dx; only derefine when dx < derefine_dx
     derefine_dx              = min_dx * 2**derefine_levels
 
-    call solve(0.0_dp, n_its, residu)
+    call solve(0.0_dp, rtol, n_its, residu)
 
     do n = 1, 20
        call adjust_refinement(n_add)
        if (n_add == 0) exit
-       call solve(0.0_dp, n_its, residu)
+
+       ! Reset r.h.s. since we are not advancing in time
+       call af_tree_clear_cc(tree, mg%i_rhs)
+       call solve(0.0_dp, rtol, n_its, residu)
     end do
   end subroutine set_refinement
 
@@ -351,8 +355,9 @@ contains
   end subroutine get_var_along_line
 
   ! Compute new potential for a given time step using the current sigma
-  subroutine solve(dt, n_iterations, residu)
+  subroutine solve(dt, rtol, n_iterations, residu)
     real(dp), intent(in)  :: dt
+    real(dp), intent(in)  :: rtol
     integer, intent(out)  :: n_iterations
     real(dp), intent(out) :: residu
     integer, parameter    :: max_iterations = 100
@@ -375,7 +380,8 @@ contains
     do n_iterations = 1, max_iterations
        call mg_fas_fmg(tree, mg, set_residual=.true., have_guess=.true.)
        call af_tree_maxabs_cc(tree, mg%i_tmp, residu)
-       if (residu < 1e-5_dp * max_rhs .or. residu > 0.5 * prev_residu) exit
+
+       if (residu < rtol * max_rhs .or. residu > 0.5 * prev_residu) exit
        prev_residu = residu
     end do
 
