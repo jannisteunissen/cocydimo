@@ -32,3 +32,8 @@ To see a full list of options, use:
 
     ./2d_model.py -h
     ./3d_model.py -h
+
+Example
+==
+
+![alt text](https://github.com/jannisteunissen/cocydimo/blob/main/media/ICPIG_2025_example.png?raw=true)
