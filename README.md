@@ -9,7 +9,7 @@ Getting the code and compiling
 To compile the code, the following packages are required:
 
 * Recent versions of `gcc` and `gfortran`. Other compilers can probably be used as well by modifying the build process.
-* `f2py` and `meson` to create a Python module
+* `f2py` and `meson` and python3 development files (e.g., `python3-dev' on Debian/Ubuntu) to create a Python module
 
 The code (including the [afivo library](https://github.com/MD-CWI/afivo)) can be downloaded with:
 
@@ -17,7 +17,7 @@ The code (including the [afivo library](https://github.com/MD-CWI/afivo)) can be
 
 Compiling for the first time can take some time:
 
-    cd reduced-discharge-model
+    cd cocydimo
     make
 
 Running
