@@ -17,7 +17,7 @@ The code (including the [afivo library](https://github.com/MD-CWI/afivo)) can be
 
 Compiling for the first time can take some time:
 
-    cd reduced-discharge-model
+    cd cocydimo
     make
 
 Running
