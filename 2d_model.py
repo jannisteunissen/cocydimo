@@ -5,6 +5,7 @@ import copy
 import argparse
 import numpy as np
 import json
+import os
 from numpy.linalg import norm
 import model_lib as mlib
 from poisson_2d import m_solver as p2d
@@ -75,6 +76,9 @@ parser.add_argument('-steps_per_output', type=int, default=1,
                     help='Write output every N steps')
 
 args = parser.parse_args()
+
+# Make sure output folder exists
+os.makedirs(os.path.dirname(args.siloname), exist_ok=True)
 
 # Save settings
 fname = f'{args.siloname}.json'
