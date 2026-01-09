@@ -1,7 +1,7 @@
 AF_DIR=${CURDIR}/afivo
 
 FC := gfortran
-FFLAGS := -O2 -g -std=f2008 -fopenmp -cpp -fPIC -Wall -Wno-unused-dummy-argument
+FFLAGS := -O2 -g -std=f2008 -fopenmp -cpp -fPIC -Wall -Wno-unused-dummy-argument -Wl,-z,noexecstack
 CFLAGS := -Wall -Winvalid-pch -O3 -fPIC -cpp
 
 BUILD_DIR_2D := build_2d
@@ -65,4 +65,3 @@ $(AFIVO_LIB_2D):
 
 $(AFIVO_LIB_3D):
 	$(MAKE) -C afivo lib_3d
-
