@@ -4,6 +4,21 @@ module m_solver
   use m_solver_lib
 
   implicit none
+  private
+
+  public :: initialize_domain
+  public :: use_uniform_grid
+  public :: set_refinement
+  public :: adjust_refinement
+  public :: set_rod_electrode
+  public :: update_sigma
+  public :: store_k_eff
+  public :: get_finest_grid_spacing
+  public :: get_max_field_location
+  public :: get_field_vector_at
+  public :: get_var_along_line
+  public :: solve
+  public :: write_solution
 
 contains
 
