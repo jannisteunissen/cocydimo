@@ -3,6 +3,7 @@ AF_DIR=${CURDIR}/afivo
 FC := gfortran
 FFLAGS := -O2 -g -std=f2008 -fopenmp -cpp -fPIC -Wall -Wno-unused-dummy-argument -Wl,-z,noexecstack
 CFLAGS := -Wall -Winvalid-pch -O3 -fPIC -cpp
+F2PY_FLAGS := --backend meson
 
 BUILD_DIR_2D := build_2d
 BUILD_DIR_3D := build_3d
@@ -27,13 +28,13 @@ lib2d: $(BUILD_DIR_2D)/libsolver.a
 	FFLAGS="$(FFLAGS) -Dfndims=2" CFLAGS="$(CFLAGS) -Dfndims=2" f2py \
 	-c -m poisson_2d m_solver.f90 cpp_macros.h -lsolver \
 	$(addprefix -I,$(INCDIRS_2D)) $(addprefix -L,$(LIBDIRS_2D)) \
-	$(addprefix -l,$(LIBS)) --build-dir $(BUILD_DIR_2D)
+	$(addprefix -l,$(LIBS)) --build-dir $(BUILD_DIR_2D) $(F2PY_FLAGS)
 
 lib3d: $(BUILD_DIR_3D)/libsolver.a
 	FFLAGS="$(FFLAGS) -Dfndims=3" CFLAGS="$(CFLAGS) -Dfndims=3" f2py \
 	-c -m poisson_3d m_solver.f90 cpp_macros.h -lsolver \
 	$(addprefix -I,$(INCDIRS_3D)) $(addprefix -L,$(LIBDIRS_3D)) \
-	$(addprefix -l,$(LIBS)) --build-dir $(BUILD_DIR_3D)
+	$(addprefix -l,$(LIBS)) --build-dir $(BUILD_DIR_3D) $(F2PY_FLAGS)
 
 clean:
 	$(RM) *.so *.o *.mod *.a
