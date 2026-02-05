@@ -50,7 +50,9 @@ class AirStreamerModel():
     E_threshold : float
         A threshold value used for fitting data, set to 5e6.
     c0 : float
-        A correction factor of order unity.
+        A correction factor for L_E on coarser grids than dz0
+    c1 : float
+        A correction factor for L_E on finer grids than dz0
     dz0 : float
         The grid spacing used when fitting data.
 
@@ -72,8 +74,9 @@ class AirStreamerModel():
 
     E_threshold = 5e6  # Used for fitting data
 
-    def __init__(self, c0=0.0, dz0=0.0):
+    def __init__(self, c0=0.0, c1=0.0, dz0=0.0):
         self.c0 = c0
+        self.c1 = c1
         self.dz0 = dz0
 
     @staticmethod
@@ -168,7 +171,10 @@ class AirStreamerModel():
 
         # Apply correction for finite grid spacing
         if dz is not None:
-            L_E += self.c0 * (dz - self.dz0)
+            if dz > self.dz0:
+                L_E += self.c0 * (dz - self.dz0)
+            else:
+                L_E += self.c1 * (dz - self.dz0)
 
         return L_E
 

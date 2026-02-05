@@ -56,6 +56,8 @@ parser.add_argument('-L_E_min', type=float, default=1e-4,
                     help='Minimum value of L_E (m)')
 parser.add_argument('-c0_L_E_dx', type=float, default=0.75,
                     help='Correction factor for L_E w.r.t. data grid spacing')
+parser.add_argument('-c1_L_E_dx', type=float, default=0.0,
+                    help='Correction factor for L_E when dx < dx_data')
 parser.add_argument('-k_eff_file', type=str, default='data/k_eff_air.txt',
                     help='File with k_eff (1/s) vs electric field (V/m)')
 parser.add_argument('-poisson_rtol', type=float, default=1e-5,
@@ -86,7 +88,8 @@ with open(fname, 'w') as f:
     json.dump(args.__dict__, f, indent=2)
     print(f'Wrote settings to {fname}')
 
-model = mlib.AirStreamerModel(c0=args.c0_L_E_dx, dz0=args.dz_data)
+model = mlib.AirStreamerModel(c0=args.c0_L_E_dx, c1=args.c1_L_E_dx,
+                              dz0=args.dz_data)
 
 np.random.seed(args.rng_seed)
 
