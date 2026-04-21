@@ -76,6 +76,24 @@ parser.add_argument('-memory_limit', type=float, default=0.1,
                     help='Memory limit (GB)')
 parser.add_argument('-steps_per_output', type=int, default=1,
                     help='Write output every N steps')
+parser.add_argument('-gas_dynamics', action='store_true',
+                    help='Simulate gas dynamics')
+parser.add_argument('-pressure', default=1.0,
+                    help='Gas pressure (bar)')
+parser.add_argument('-temperature', default=300.0,
+                    help='Gas temperature (Kelvin)')
+parser.add_argument('-mean_molecular_weight', default=28.97,
+                    help='Mean molecular weight of gas molecules (Dalton)')
+parser.add_argument('-gas_gamma', default=1.4,
+                    help='Gas adiabatic index')
+parser.add_argument('-gas_fast_heat_factor', default=1.0,
+                    help='Fraction of Joule heating that is immediately'
+                    'converted to gas heating')
+parser.add_argument('-gas_slow_heat_factor', default=0.0,
+                    help='Fraction of Joule heating that is slowly converted'
+                    'to gas heating')
+parser.add_argument('-gas_slow_heat_timescale', default=20.0e-6,
+                    help='Time scale for slow heating (s)')
 
 args = parser.parse_args()
 
@@ -96,8 +114,14 @@ np.random.seed(args.rng_seed)
 p2d.set_rod_electrode(args.rod_r0, args.rod_r1, args.rod_radius)
 p2d.initialize_domain(args.domain_size, args.coarse_grid_size,
                       args.box_size, args.phi_bc, args.memory_limit,
-                      args.write_eps, args.write_time, args.write_rhs)
+                      args.write_eps, args.write_time, args.write_rhs,
+                      args.gas_dynamics)
 p2d.use_uniform_grid(args.grid_size)
+
+if args.gas_dynamics:
+    p2d.set_gas(args.pressure, args.temperature, args.mean_molecular_weight,
+                args.gas_gamma, args.gas_fast_heat_factor,
+                args.gas_slow_heat_factor, args.gas_slow_heat_timescale)
 
 dz = p2d.get_finest_grid_spacing()
 print(f'Minimum grid spacing: {dz:.2e}')
@@ -168,6 +192,9 @@ for step in range(1, args.n_steps+1):
                  norm(s.v) * args.dt)
         s.R = s.R + dR
         s.r = s.r + s.v * (args.dt - 0.99 * dR/norm(s.v))
+
+    if args.gas_dynamics:
+        p2d.update_gas(args.dt)
 
     mlib.update_sigma(p2d.update_sigma, streamers, streamers_prev,
                       time, args.dt, args.channel_update_delay, step == 1,

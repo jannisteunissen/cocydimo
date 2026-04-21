@@ -7,6 +7,7 @@ module m_solver_lib
   public
 
   real(dp), parameter :: eps0 = 8.8541878128e-12_dp ! permitivity of vacuum (SI)
+  real(dp), parameter :: elem_charge = 1.602176634e-19_dp
   real(dp), parameter :: pi = acos(-1.0_dp)
 
   type(af_t) :: tree
@@ -19,6 +20,52 @@ module m_solver_lib
   integer    :: i_dsigma
   integer    :: i_lsf
   integer    :: i_time
+
+  ! For gas dynamics
+  real(dp) :: gas_gamma = 1.4_dp
+  real(dp) :: gas_inv_gamma_m1 = 1/(1.4_dp - 1)
+
+  ! Number of gas variables
+  integer, parameter :: n_gas_vars = 2 + fndims
+
+  ! Density variable (relative index)
+  integer, parameter :: i_gas_rho = 1
+  ! Index offset for momentum (relative index)
+#if fndims == 2
+  integer, parameter :: i_gas_mom(fndims) = [2, 3]
+#elif fndims == 3
+  integer, parameter :: i_gas_mom(fndims) = [2, 3, 4]
+#endif
+  ! Energy variable (relative index)
+  integer, parameter :: i_gas_e = 2 + fndims
+
+  ! Indices of temporal variables in tree data structure
+  integer :: i_gas_vars(n_gas_vars) = -1
+
+  ! Indices of fluxes in tree data structure
+  integer :: i_gas_fluxes(n_gas_vars) = -1
+
+  ! Index of slow gas heating variable in tree data structure
+  integer :: i_gas_slow_heat = -1
+
+  ! Fraction of Joule heating that is immediately converted to gas heating
+  real(dp) :: gas_fast_heating_factor = 1.0_dp
+
+  ! Fraction of Joule heating that is slowly converted to gas heating
+  real(dp) :: gas_slow_heating_factor = 0.0_dp
+
+  ! Time scale for slow heating, related to V-T relaxation (s)
+  real(dp) :: gas_slow_heating_timescale = 20e-6_dp
+
+#if fndims == 2
+  ! Names of variables
+  character(len=10), parameter :: gas_var_names(n_gas_vars) = [character(len=10) :: &
+       "rho", "momx", "momy", "e"]
+#elif fndims == 3
+  ! Names of variables
+  character(len=10), parameter :: gas_var_names(n_gas_vars) = [character(len=10) :: &
+       "rho", "momx", "momy", "momz", "e"]
+#endif
 
   ! Electrode parameters
   real(dp) :: rod_r0(fndims), rod_r1(fndims), rod_radius = 0.0_dp
@@ -170,5 +217,67 @@ contains
     call dist_vec_line(r, r0, r1, n_dim, dist_vec, dist_line, frac)
     dist = norm2(dist_vec)
   end function get_dist_line
+
+  !> Boundary condition for radial momentum flux (in axisymmetric coordinates)
+  subroutine bc_radial_momentum(box, nb, iv, coords, bc_val, bc_type)
+    type(box_t), intent(in) :: box
+    integer, intent(in)     :: nb
+    integer, intent(in)     :: iv
+    real(dp), intent(in)    :: coords(fndims, box%n_cell**(fndims-1))
+    real(dp), intent(out)   :: bc_val(box%n_cell**(fndims-1))
+    integer, intent(out)    :: bc_type
+
+    if (nb == af_neighb_lowx) then
+       ! This will ensure the radial momentum is zero on the axis (by having
+       ! ghost values with opposite sign)
+       bc_type = af_bc_dirichlet
+       bc_val  = 0.0_dp
+    else
+       bc_type = af_bc_neumann
+       bc_val  = 0.0_dp
+    end if
+  end subroutine bc_radial_momentum
+
+  !> Set initial condition for the gas
+  subroutine set_initial_condition_gas(box, arguments)
+    type(box_t), intent(inout) :: box
+    real(dp), intent(in)       :: arguments(:)
+    integer                    :: IJK, nc
+
+    nc = box%n_cell
+
+    ! Initialize Euler variables: density, momentum, energy
+    do KJI_DO(0, nc+1)
+       box%cc(IJK, i_gas_vars(i_gas_rho)) = arguments(1)
+       box%cc(IJK, i_gas_vars(i_gas_mom)) = arguments(2:2+fndims-1)
+       box%cc(IJK, i_gas_vars(i_gas_e)) = arguments(2+fndims)
+    end do; CLOSE_DO
+  end subroutine set_initial_condition_gas
+
+  subroutine add_gas_source_terms(box, dt_vec)
+    type(box_t), intent(inout) :: box
+    real(dp), intent(in)       :: dt_vec(:)
+    integer                    :: IJK, nc
+    real(dp)                   :: dt, J_dot_E
+    real(dp)                   :: E_vt_release
+
+    dt = dt_vec(1)
+    nc = box%n_cell
+
+    do KJI_DO(1, nc)
+       ! Joule heating term is sigma * E**2
+       J_dot_E = box%cc(IJK, i_sigma) * box%cc(IJK, i_E_norm)**2 * dt
+
+       ! How much energy is released from slow heating
+       E_vt_release = box%cc(IJK, i_gas_slow_heat)/gas_slow_heating_timescale * dt
+
+       box%cc(IJK, i_gas_slow_heat) = box%cc(IJK, i_gas_slow_heat) + &
+            gas_slow_heating_factor * J_dot_E - E_vt_release
+
+       box%cc(IJK, i_gas_vars(i_gas_e)) = box%cc(IJK, i_gas_vars(i_gas_e)) + &
+            gas_fast_heating_factor * J_dot_E + E_vt_release
+    end do; CLOSE_DO
+
+  end subroutine add_gas_source_terms
 
 end module m_solver_lib

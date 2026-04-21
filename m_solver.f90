@@ -19,12 +19,15 @@ module m_solver
   public :: get_var_along_line
   public :: solve
   public :: write_solution
+  public :: set_gas
+  public :: update_gas
 
 contains
 
   ! Initialize the computational domain
   subroutine initialize_domain(domain_len, coarse_grid_size, box_size, &
-       voltage, mem_limit_gb, write_eps, write_time, write_rhs)
+       voltage, mem_limit_gb, write_eps, write_time, write_rhs, &
+       gas_dynamics)
     real(dp), intent(in) :: domain_len(fndims)       ! Domain size (m)
     integer, intent(in)  :: coarse_grid_size(fndims) ! Coarse grid size
     integer, intent(in)  :: box_size                 ! Size of grid boxes
@@ -33,7 +36,8 @@ contains
     logical, intent(in)  :: write_eps                ! Write epsilon to output
     logical, intent(in)  :: write_time               ! Write time to output
     logical, intent(in)  :: write_rhs                ! Write rhs to output
-    integer              :: coord_t
+    logical, intent(in)  :: gas_dynamics             ! Simulate gas dynamics
+    integer              :: coord_t, n
 
     coord_t = af_xyz
     if (fndims == 2) coord_t = af_cyl
@@ -56,6 +60,22 @@ contains
     call af_set_cc_methods(tree, i_E_norm, af_bc_neumann_zero)
     call af_set_cc_methods(tree, i_time, af_bc_neumann_zero)
 
+    if (gas_dynamics) then
+       call af_add_cc_variable(tree, "slow_heat", ix=i_gas_slow_heat)
+
+       do n = 1, n_gas_vars
+          call af_add_cc_variable(tree, gas_var_names(n), ix=i_gas_vars(n), &
+               n_copies=2)
+          call af_add_fc_variable(tree, "flux", ix=i_gas_fluxes(n))
+
+          if (coord_t == af_cyl .and. n == i_gas_mom(1)) then
+             call af_set_cc_methods(tree, i_gas_vars(n), bc_radial_momentum)
+          else
+             call af_set_cc_methods(tree, i_gas_vars(n), af_bc_neumann_zero)
+          end if
+       end do
+    end if
+
     if (rod_radius > 0) then
        call af_add_cc_variable(tree, "lsf", ix=i_lsf)
 
@@ -77,6 +97,53 @@ contains
     mg_lpl = mg
     mg_lpl%operator_mask = mg_normal_box + mg_lsf_box
   end subroutine initialize_domain
+
+  !> Set initial state for gas
+  subroutine set_gas(pressure, temperature, mean_molecular_weight, gamma, &
+       f_fast_heat, f_slow_heat, tau_slow_heat)
+    real(dp), intent(in) :: pressure ! in bar
+    real(dp), intent(in) :: temperature ! in Kelvin
+    real(dp), intent(in) :: mean_molecular_weight ! in Dalton
+    real(dp), intent(in) :: gamma ! Adiabatic index
+    real(dp), intent(in) :: f_fast_heat ! Fast heating factor
+    real(dp), intent(in) :: f_slow_heat ! Slow heating factor
+    real(dp), intent(in) :: tau_slow_heat ! Slow heating time scale (s)
+
+    real(dp), parameter :: Da = 1.66053906892e-27_dp ! Dalton (kg)
+    real(dp), parameter :: k_b = 1.380649e-23_dp ! Boltzmann constant (J/K)
+    real(dp)            :: N0, rho, momentum(fndims), energy
+
+    if (.not. allocated(tree%boxes)) &
+         error stop "Call initialize_domain before set_gas"
+    if (i_gas_vars(1) == -1) &
+         error stop "Gas was not initialized when calling initialize_domain"
+
+    gas_fast_heating_factor    = f_fast_heat
+    gas_slow_heating_factor    = f_slow_heat
+    gas_slow_heating_timescale = tau_slow_heat
+
+    ! Ideal gas law (approximation)
+    N0 = 1e5_dp * pressure / (k_b * temperature)
+
+    ! Set initial gas density
+    rho = N0 * mean_molecular_weight * Da
+
+    ! Initial momentum
+    momentum = 0.0_dp
+
+    ! Initial energy
+    energy = pressure * 1e5_dp / (gas_gamma - 1)
+
+    ! Set initial density, momentum and energy in domain
+    call af_loop_box_arg(tree, set_initial_condition_gas, [rho, momentum, energy])
+  end subroutine set_gas
+
+  !> Add source terms from the discharge in the Euler equations
+  subroutine update_gas(dt)
+    real(dp), intent(in) :: dt
+
+    call af_loop_box_arg(tree, add_gas_source_terms, [dt], .true.)
+  end subroutine update_gas
 
   ! Perform uniform initial refinement of the domain
   subroutine use_uniform_grid(uniform_grid_size)
