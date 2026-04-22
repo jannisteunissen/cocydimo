@@ -58,8 +58,11 @@ parser.add_argument('-c0_L_E_dx', type=float, default=0.75,
                     help='Correction factor for L_E w.r.t. data grid spacing')
 parser.add_argument('-c1_L_E_dx', type=float, default=0.0,
                     help='Correction factor for L_E when dx < dx_data')
-parser.add_argument('-k_eff_file', type=str, default='data/k_eff_air.txt',
-                    help='File with k_eff (1/s) vs electric field (V/m)')
+parser.add_argument('-k_eff_file', type=str,
+                    default='data/k_eff_air_Phelps.txt',
+                    help='File with k_eff (1/s) vs electric field (Td)')
+parser.add_argument('-k_eff_num_points', type=int, default=200,
+                    help='Number of points to use internally for k_eff_table')
 parser.add_argument('-poisson_rtol', type=float, default=1e-5,
                     help='Relative tolerance for Poisson solver')
 parser.add_argument('-siloname', type=str, default='output/simulation_2d',
@@ -78,21 +81,21 @@ parser.add_argument('-steps_per_output', type=int, default=1,
                     help='Write output every N steps')
 parser.add_argument('-gas_dynamics', action='store_true',
                     help='Simulate gas dynamics')
-parser.add_argument('-pressure', default=1.0,
+parser.add_argument('-pressure', type=float, default=1.0,
                     help='Gas pressure (bar)')
-parser.add_argument('-temperature', default=300.0,
+parser.add_argument('-temperature', type=float, default=300.0,
                     help='Gas temperature (Kelvin)')
-parser.add_argument('-mean_molecular_weight', default=28.97,
+parser.add_argument('-mean_molecular_weight', type=float, default=28.97,
                     help='Mean molecular weight of gas molecules (Dalton)')
-parser.add_argument('-gas_gamma', default=1.4,
+parser.add_argument('-gas_gamma', type=float, default=1.4,
                     help='Gas adiabatic index')
-parser.add_argument('-gas_fast_heat_factor', default=1.0,
+parser.add_argument('-gas_fast_heat_factor', type=float, default=1.0,
                     help='Fraction of Joule heating that is immediately'
                     'converted to gas heating')
-parser.add_argument('-gas_slow_heat_factor', default=0.0,
+parser.add_argument('-gas_slow_heat_factor', type=float, default=0.0,
                     help='Fraction of Joule heating that is slowly converted'
                     'to gas heating')
-parser.add_argument('-gas_slow_heat_timescale', default=20.0e-6,
+parser.add_argument('-gas_slow_heat_timescale', type=float, default=20.0e-6,
                     help='Time scale for slow heating (s)')
 
 args = parser.parse_args()
@@ -118,6 +121,9 @@ p2d.initialize_domain(args.domain_size, args.coarse_grid_size,
                       args.gas_dynamics)
 p2d.use_uniform_grid(args.grid_size)
 
+# Initial gas density
+N0 = 1e5 * args.pressure / (args.temperature * 1.380649e-23)
+
 if args.gas_dynamics:
     p2d.set_gas(args.pressure, args.temperature, args.mean_molecular_weight,
                 args.gas_gamma, args.gas_fast_heat_factor,
@@ -132,10 +138,15 @@ p2d.write_solution(f'{args.siloname}_{0:04d}', 0, 0.)
 
 # Set table with effective ionization rate
 table_fld, table_k_eff = np.loadtxt(args.k_eff_file).T
-if args.channel_no_ionization:
-    table_k_eff = np.minimum(table_k_eff, 0.0)
 
-p2d.store_k_eff(table_fld[0], table_fld[-1], table_k_eff)
+# Ensure table has uniform spacing
+x = np.linspace(table_fld[0], table_fld[-1], args.k_eff_num_points)
+y = np.interp(x, table_fld, table_k_eff)
+
+if args.channel_no_ionization:
+    y = np.minimum(y, 0.0)
+
+p2d.store_k_eff(x[0], x[-1], y)
 
 # Get L_E to estimate initial streamer radius
 Emax, r_Emax = p2d.get_max_field_location()
@@ -144,17 +155,18 @@ z, E, success = p2d.get_var_along_line('E_norm', [0.0, r_Emax[1]], [0., 1.0],
 if not success:
     raise RuntimeError('Interpolation error')
 
-L_E = model.get_L_E(z, E, dz)
+L_E = model.get_L_E(z, E, N0, dz)
 
 # Start with a smaller radius to approximate initial phase
-radius0 = 0.5 * args.r_scale * model.get_radius(L_E)
+radius0 = 0.5 * args.r_scale * model.get_radius(L_E, N0)
 
 # Single streamer in the z-direction
 streamers = [mlib.Streamer([0.0, r_Emax[1] - radius0],
                            [0., 1.0], radius0, 0.0)]
 
+time = 0.0
+
 for step in range(1, args.n_steps+1):
-    time = (step-1) * args.dt
     print(f'{step:4d} t = {time*1e9:.1f} ns')
 
     streamers_prev = copy.deepcopy(streamers)
@@ -163,14 +175,26 @@ for step in range(1, args.n_steps+1):
 
         # Get samples of |E| ahead of the streamer to determine L_E
         r_tip = s.r + 0.5 * s.R * s.v/norm(s.v)
-        z, E, success = p2d.get_var_along_line('E_norm', r_tip, s.v,
-                                               args.L_E_max, 2*args.L_E_max/dz)
+
+        # Check whether we can interpolate at r_tip
+        E_hat, success = p2d.get_field_vector_at(r_tip)
+
         if not success:
-            print('Could not sample L_E, removing streamer')
+            print('Could not sample E_hat, removing streamer')
             s.keep = False
             continue
 
-        L_E_new = model.get_L_E(z, E, dz)
+        if args.gas_dynamics:
+            N0, success = p2d.get_gas_number_density_at(r_tip)
+
+        z, E, success = p2d.get_var_along_line('E_norm', r_tip, s.v,
+                                               args.L_E_max, 2*args.L_E_max/dz)
+
+        if success:
+            L_E_new = model.get_L_E(z, E, N0, dz)
+        else:
+            # Use previous value
+            L_E_new = s.L_E
 
         if L_E_new < args.L_E_min:
             print(f'L_E too small {L_E_new:.2e}, removing streamer')
@@ -185,10 +209,11 @@ for step in range(1, args.n_steps+1):
         # Propagation in +z direction
         E_hat = np.array([0.0, 1.0])
 
-        s.sigma = model.get_sigma(L_E)
-        s.v = model.get_velocity(L_E) * E_hat
+        s.L_E = L_E
+        s.sigma = model.get_sigma(L_E, N0)
+        s.v = model.get_velocity(L_E, N0) * E_hat
 
-        dR = min(args.r_scale * model.get_radius(L_E) - s.R,
+        dR = min(args.r_scale * model.get_radius(L_E, N0) - s.R,
                  norm(s.v) * args.dt)
         s.R = s.R + dR
         s.r = s.r + s.v * (args.dt - 0.99 * dR/norm(s.v))
@@ -196,7 +221,7 @@ for step in range(1, args.n_steps+1):
     if args.gas_dynamics:
         p2d.update_gas(args.dt)
 
-    mlib.update_sigma(p2d.update_sigma, streamers, streamers_prev,
+    mlib.update_sigma(2, p2d.update_sigma, streamers, streamers_prev,
                       time, args.dt, args.channel_update_delay, step == 1,
                       args.channel_max_sigma)
     p2d.solve(args.dt, args.poisson_rtol)
@@ -209,5 +234,3 @@ for step in range(1, args.n_steps+1):
         p2d.write_solution(f'{args.siloname}_{i_output:04d}', i_output, time)
 
     streamers = [s for s in streamers if s.keep]
-    if len(streamers) == 0:
-        raise ValueError('All streamers gone')

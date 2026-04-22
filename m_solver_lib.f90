@@ -8,7 +8,11 @@ module m_solver_lib
 
   real(dp), parameter :: eps0 = 8.8541878128e-12_dp ! permitivity of vacuum (SI)
   real(dp), parameter :: elem_charge = 1.602176634e-19_dp
+  real(dp), parameter :: Da = 1.66053906892e-27_dp ! Dalton (kg)
+  real(dp), parameter :: k_b = 1.380649e-23_dp ! Boltzmann constant (J/K)
   real(dp), parameter :: pi = acos(-1.0_dp)
+  real(dp), parameter, public :: SI_to_Townsend = 1e21_dp ! Convert V/m to Townsend
+  real(dp), parameter, public :: Townsend_to_SI = 1e-21_dp ! Convert Townsend to V/m
 
   type(af_t) :: tree
   type(mg_t) :: mg
@@ -24,6 +28,12 @@ module m_solver_lib
   ! For gas dynamics
   real(dp) :: gas_gamma = 1.4_dp
   real(dp) :: gas_inv_gamma_m1 = 1/(1.4_dp - 1)
+
+  ! Mean molecular weight of gas
+  real(dp) :: gas_inv_molecular_weight = 0 ! will be set later
+
+  ! Inverse of initial gas number density
+  real(dp) :: gas_inv_N0 = 300_dp * k_b / 1e5_dp
 
   ! Number of gas variables
   integer, parameter :: n_gas_vars = 2 + fndims
@@ -60,11 +70,11 @@ module m_solver_lib
 #if fndims == 2
   ! Names of variables
   character(len=10), parameter :: gas_var_names(n_gas_vars) = [character(len=10) :: &
-       "rho", "momx", "momy", "e"]
+       "gas_rho", "gas_momx", "gas_momy", "gas_e"]
 #elif fndims == 3
   ! Names of variables
   character(len=10), parameter :: gas_var_names(n_gas_vars) = [character(len=10) :: &
-       "rho", "momx", "momy", "momz", "e"]
+       "gas_rho", "gas_momx", "gas_momy", "gas_momz", "gas_e"]
 #endif
 
   ! Electrode parameters
@@ -279,5 +289,199 @@ contains
     end do; CLOSE_DO
 
   end subroutine add_gas_source_terms
+
+  subroutine gas_forward_euler(tree, dt, dt_stiff, dt_lim, time, s_deriv, n_prev, &
+       s_prev, w_prev, s_out, i_step, n_steps)
+    type(af_t), intent(inout) :: tree
+    real(dp), intent(in)      :: dt
+    real(dp), intent(in)      :: dt_stiff       !< Time step for stiff terms
+    real(dp), intent(inout)   :: dt_lim
+    real(dp), intent(in)      :: time
+    integer, intent(in)       :: s_deriv
+    integer, intent(in)       :: n_prev         !< Number of previous states
+    integer, intent(in)       :: s_prev(n_prev) !< Previous states
+    real(dp), intent(in)      :: w_prev(n_prev) !< Weights of previous states
+    integer, intent(in)       :: s_out
+    integer, intent(in)       :: i_step, n_steps
+    real(dp)                  :: dummy_dt(0)
+
+    call flux_generic_tree(tree, n_gas_vars, i_gas_vars, s_deriv, i_gas_fluxes, dt_lim, &
+         max_wavespeed, get_fluxes, flux_dummy_modify, flux_dummy_line_modify, &
+         to_primitive, to_conservative, af_limiter_vanleer_t)
+
+    if (tree%coord_t == af_cyl) then
+       call flux_update_densities(tree, dt, n_gas_vars, i_gas_vars, n_gas_vars, &
+            i_gas_vars, i_gas_fluxes, s_deriv, n_prev, s_prev, w_prev, s_out, &
+            add_geometric_source, 0, dummy_dt)
+    else
+       call flux_update_densities(tree, dt, n_gas_vars, i_gas_vars, n_gas_vars, &
+            i_gas_vars, i_gas_fluxes, s_deriv, n_prev, s_prev, w_prev, s_out, &
+            flux_dummy_source, 0, dummy_dt)
+    end if
+
+  end subroutine gas_forward_euler
+
+  !> Convert gas variables to primitive form
+  subroutine to_primitive(n_values, n_vars, u)
+    integer, intent(in)     :: n_values, n_vars
+    real(dp), intent(inout) :: u(n_values, n_vars)
+
+    u(:, i_gas_mom(1)) = u(:, i_gas_mom(1))/u(:, i_gas_rho)
+    u(:, i_gas_mom(2)) = u(:, i_gas_mom(2))/u(:, i_gas_rho)
+    u(:, i_gas_e) = (gas_gamma-1.0_dp) * (u(:, i_gas_e) - &
+         0.5_dp*u(:, i_gas_rho)* sum(u(:, i_gas_mom(:))**2, dim=2))
+  end subroutine to_primitive
+
+  !> Convert gas variables to conservative form
+  subroutine to_conservative(n_values, n_vars, u)
+    integer, intent(in)     :: n_values, n_vars
+    real(dp), intent(inout) :: u(n_values, n_vars)
+    real(dp)                :: kin_en(n_values)
+    real(dp)                :: inv_fac
+    integer                 :: i
+
+    ! Compute kinetic energy (0.5 * rho * velocity^2)
+    kin_en = 0.5_dp * u(:, i_gas_rho) * sum(u(:, i_gas_mom(:))**2, dim=2)
+
+    ! Compute energy from pressure and kinetic energy
+    inv_fac = 1/(gas_gamma - 1.0_dp)
+    u(:, i_gas_e) = u(:, i_gas_e) * inv_fac + kin_en
+
+    ! Compute momentum from density and velocity components
+    do i = 1, fndims
+       u(:, i_gas_mom(i)) = u(:, i_gas_rho) * u(:, i_gas_mom(i))
+    end do
+  end subroutine to_conservative
+
+  !> Estimate of maximum wavespeed in gas
+  subroutine max_wavespeed(n_values, n_var, flux_dim, u, w)
+    integer, intent(in)   :: n_values !< Number of cell faces
+    integer, intent(in)   :: n_var    !< Number of variables
+    integer, intent(in)   :: flux_dim !< In which dimension fluxes are computed
+    real(dp), intent(in)  :: u(n_values, n_var) !< Primitive variables
+    real(dp), intent(out) :: w(n_values) !< Maximum speed
+    real(dp)              :: sound_speeds(n_values)
+
+    sound_speeds = sqrt(gas_gamma * u(:, i_gas_e) / u(:, i_gas_rho))
+    w = sound_speeds + abs(u(:, i_gas_mom(flux_dim)))
+  end subroutine max_wavespeed
+
+  !> Compute fluxes from primitive variables
+  subroutine get_fluxes(n_values, n_var, flux_dim, u, flux, box, line_ix, s_deriv)
+    integer, intent(in)     :: n_values !< Number of cell faces
+    integer, intent(in)     :: n_var    !< Number of variables
+    integer, intent(in)     :: flux_dim !< In which dimension fluxes are computed
+    real(dp), intent(in)    :: u(n_values, n_var)
+    real(dp), intent(out)   :: flux(n_values, n_var)
+    type(box_t), intent(in) :: box
+    integer, intent(in)     :: line_ix(fndims-1)
+    integer, intent(in)     :: s_deriv
+    real(dp)                :: E(n_values), inv_fac
+    integer                 :: i
+
+    ! Compute left and right flux for conservative variables from the primitive
+    ! reconstructed values.
+
+    ! Density flux
+    flux(:, i_gas_rho) = u(:, i_gas_rho) * u(:, i_gas_mom(flux_dim))
+
+    ! Momentum flux
+    do i = 1, fndims
+       flux(:,  i_gas_mom(i)) = u(:, i_gas_rho) * &
+            u(:, i_gas_mom(i)) * u(:, i_gas_mom(flux_dim))
+    end do
+
+    ! Add pressure term
+    flux(:, i_gas_mom(flux_dim)) = flux(:, i_gas_mom(flux_dim)) + u(:, i_gas_e)
+
+    ! Compute energy
+    inv_fac = 1/(gas_gamma-1.0_dp)
+    E = u(:, i_gas_e) * inv_fac + 0.5_dp * u(:, i_gas_rho) * &
+         sum(u(:, i_gas_mom(:))**2, dim=2)
+
+    ! Energy flux
+    flux(:, i_gas_e) = u(:, i_gas_mom(flux_dim)) * (E + u(:, i_gas_e))
+
+  end subroutine get_fluxes
+
+  !> Geometric source term for axisymmetric simulations of gas dynamics
+  subroutine add_geometric_source(box, dt, n_vars, i_cc, s_deriv, s_out, &
+       n_dt, dt_lim, mask)
+    type(box_t), intent(inout) :: box
+    real(dp), intent(in)       :: dt
+    integer, intent(in)        :: n_vars
+    integer, intent(in)        :: i_cc(n_vars)
+    integer, intent(in)        :: s_deriv
+    integer, intent(in)        :: s_out
+    logical, intent(in)        :: mask(DTIMES(box%n_cell))
+    integer, intent(in)        :: n_dt
+    real(dp), intent(inout)    :: dt_lim(n_dt)
+
+#if fndims == 2
+    real(dp)                   :: pressure(DTIMES(box%n_cell))
+    real(dp)                   :: inv_radius
+    integer                    :: nc, i
+
+    nc = box%n_cell
+    pressure = get_pressure(box, s_deriv)
+
+    do i = 1, nc
+       inv_radius = 1/af_cyl_radius_cc(box, i)
+       where (mask(i, :))
+          box%cc(i, 1:nc, i_cc(i_gas_mom(1))+s_out) = &
+               box%cc(i, 1:nc, i_cc(i_gas_mom(1))+s_out) + dt * &
+               pressure(i, :) * inv_radius
+       end where
+    end do
+#endif
+  end subroutine add_geometric_source
+
+#if fndims == 2
+  pure function get_pressure(box, s_in) result(pressure)
+    type(box_t), intent(in) :: box
+    integer, intent(in)     :: s_in
+    real(dp)                :: pressure(DTIMES(box%n_cell))
+    integer                 :: nc
+
+    nc = box%n_cell
+    pressure = (gas_gamma-1.0_dp) * (&
+         box%cc(DTIMES(1:nc), i_gas_vars(i_gas_e)+s_in) - 0.5_dp * &
+         sum(box%cc(DTIMES(1:nc), i_gas_vars(i_gas_mom)+s_in)**2, dim=fndims+1) / &
+         box%cc(DTIMES(1:nc), i_gas_vars(i_gas_rho)+s_in))
+  end function get_pressure
+#endif
+
+  !> Write primitive variables to output: velocities, pressure, temperature
+  subroutine write_gas_primitive(box, new_vars, n_var)
+    type(box_t), intent(in) :: box
+    integer, intent(in)     :: n_var
+    integer                 :: i
+    real(dp)                :: new_vars(DTIMES(0:box%n_cell+1), n_var)
+    real(dp)                :: inv_rho(DTIMES(0:box%n_cell+1))
+
+    if (n_var /= fndims + 3) error stop "Invalid value for n_var"
+
+    inv_rho = 1/box%cc(DTIMES(:), i_gas_vars(i_gas_rho))
+
+    ! Velocity
+    do i = 1, fndims
+       new_vars(DTIMES(:), i) = box%cc(DTIMES(:), i_gas_vars(i_gas_mom(i))) * inv_rho
+    end do
+
+    ! Pressure = (gamma - 1) * (gas_e - kinetic energy)
+    new_vars(DTIMES(:), fndims+1) = (gas_gamma-1.0_dp) * &
+         (box%cc(DTIMES(:), i_gas_vars(i_gas_e)) - &
+         0.5_dp * inv_rho * &
+         sum(box%cc(DTIMES(:), i_gas_vars(i_gas_mom(:)))**2, dim=fndims+1))
+
+    ! Gas number density N = rho / molecular weight
+    new_vars(DTIMES(:), fndims+2) = box%cc(DTIMES(:), i_gas_vars(i_gas_rho)) * &
+         gas_inv_molecular_weight
+
+    ! Temperature = P / (k_b * N)
+    new_vars(DTIMES(:), fndims+3) = new_vars(DTIMES(:), fndims+1) / &
+         (k_b * new_vars(DTIMES(:), fndims+2))
+
+  end subroutine write_gas_primitive
 
 end module m_solver_lib

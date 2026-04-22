@@ -62,8 +62,11 @@ parser.add_argument('-c0_L_E_dx', type=float, default=0.75,
                     help='Correction factor for L_E w.r.t. data grid spacing')
 parser.add_argument('-c1_L_E_dx', type=float, default=0.0,
                     help='Correction factor for L_E when dx < dx_data')
-parser.add_argument('-k_eff_file', type=str, default='data/k_eff_air.txt',
-                    help='File with k_eff (1/s) vs electric field (V/m)')
+parser.add_argument('-k_eff_file', type=str,
+                    default='data/k_eff_air_Phelps.txt',
+                    help='File with k_eff (1/s) vs electric field (Td)')
+parser.add_argument('-k_eff_num_points', type=int, default=200,
+                    help='Number of points to use internally for k_eff_table')
 parser.add_argument('-poisson_rtol', type=float, default=1e-5,
                     help='Relative tolerance for Poisson solver')
 parser.add_argument('-siloname', type=str, default='output/simulation_3d',
@@ -102,21 +105,21 @@ parser.add_argument('-steps_per_output', type=int, default=1,
                     help='Write output every N steps')
 parser.add_argument('-gas_dynamics', action='store_true',
                     help='Simulate gas dynamics')
-parser.add_argument('-pressure', default=1.0,
+parser.add_argument('-pressure', type=float, default=1.0,
                     help='Gas pressure (bar)')
-parser.add_argument('-temperature', default=300.0,
+parser.add_argument('-temperature', type=float, default=300.0,
                     help='Gas temperature (Kelvin)')
-parser.add_argument('-mean_molecular_weight', default=28.97,
+parser.add_argument('-mean_molecular_weight', type=float, default=28.97,
                     help='Mean molecular weight of gas molecules (Dalton)')
-parser.add_argument('-gas_gamma', default=1.4,
+parser.add_argument('-gas_gamma', type=float, default=1.4,
                     help='Gas adiabatic index')
-parser.add_argument('-gas_fast_heat_factor', default=1.0,
+parser.add_argument('-gas_fast_heat_factor', type=float, default=1.0,
                     help='Fraction of Joule heating that is immediately'
                     'converted to gas heating')
-parser.add_argument('-gas_slow_heat_factor', default=0.0,
+parser.add_argument('-gas_slow_heat_factor', type=float, default=0.0,
                     help='Fraction of Joule heating that is slowly converted'
                     'to gas heating')
-parser.add_argument('-gas_slow_heat_timescale', default=20.0e-6,
+parser.add_argument('-gas_slow_heat_timescale', type=float, default=20.0e-6,
                     help='Time scale for slow heating (s)')
 
 args = parser.parse_args()
@@ -168,6 +171,9 @@ p3d.set_refinement(args.refine_E, args.derefine_E,
                    args.max_dx_electrode, args.derefine_nlevels,
                    args.poisson_rtol)
 
+# Initial gas density
+N0 = 1e5 * args.pressure / (args.temperature * 1.380649e-23)
+
 if args.gas_dynamics:
     p3d.set_gas(args.pressure, args.temperature, args.mean_molecular_weight,
                 args.gas_gamma, args.gas_fast_heat_factor,
@@ -182,10 +188,15 @@ p3d.write_solution(f'{args.siloname}_{0:04d}', 0, 0.)
 
 # Set table with effective ionization rate
 table_fld, table_k_eff = np.loadtxt(args.k_eff_file).T
-if args.channel_no_ionization:
-    table_k_eff = np.minimum(table_k_eff, 0.0)
 
-p3d.store_k_eff(table_fld[0], table_fld[-1], table_k_eff)
+# Ensure table has uniform spacing
+x = np.linspace(table_fld[0], table_fld[-1], args.k_eff_num_points)
+y = np.interp(x, table_fld, table_k_eff)
+
+if args.channel_no_ionization:
+    y = np.minimum(y, 0.0)
+
+p3d.store_k_eff(x[0], x[-1], y)
 
 if args.r_start is not None:
     r_start = np.array(args.r_start)
@@ -198,10 +209,10 @@ z, E, success = p3d.get_var_along_line('E_norm', r_start, [0., 0., 1.0],
                                        args.L_E_max, 2*args.L_E_max/dz)
 if not success:
     raise RuntimeError('Interpolation error at r_start')
-L_E = model.get_L_E(z, E, dz)
+L_E = model.get_L_E(z, E, N0, dz)
 
 # Start with a smaller radius to approximate initial phase
-radius0 = 0.5 * args.r_scale * model.get_radius(L_E)
+radius0 = 0.5 * args.r_scale * model.get_radius(L_E, N0)
 
 # Start with multiple streamers in random directions
 streamers = []
@@ -218,10 +229,10 @@ wct_refinement = 0.0
 wct_update_sigma = 0.0
 wct_poisson = 0.0
 wct_output = 0.0
+time = 0.0
 t_start = perf_counter()
 
 for step in range(1, args.n_steps+1):
-    time = (step-1) * args.dt
     print(f'{step:4d} t = {time*1e9:.1f} ns n_streamers = {len(streamers)}')
 
     if args.print_performance:
@@ -273,7 +284,7 @@ for step in range(1, args.n_steps+1):
                                                args.L_E_max, 2*args.L_E_max/dz)
 
         if success:
-            L_E_new = model.get_L_E(z, E, dz)
+            L_E_new = model.get_L_E(z, E, N0, dz)
         else:
             # Use previous value
             L_E_new = s.L_E
@@ -290,10 +301,10 @@ for step in range(1, args.n_steps+1):
             L_E = args.alpha * L_E_new + (1 - args.alpha) * s.L_E
 
         s.L_E = L_E
-        s.sigma = model.get_sigma(L_E)
-        s.v = model.get_velocity(L_E) * E_hat
+        s.sigma = model.get_sigma(L_E, N0)
+        s.v = model.get_velocity(L_E, N0) * E_hat
 
-        dR = min(args.r_scale * model.get_radius(L_E) - s.R,
+        dR = min(args.r_scale * model.get_radius(L_E, N0) - s.R,
                  norm(s.v) * args.dt)
         s.R = s.R + dR
         s.r = s.r + s.v * (args.dt - 0.99 * dR/norm(s.v))
@@ -307,7 +318,7 @@ for step in range(1, args.n_steps+1):
     if args.gas_dynamics:
         p3d.update_gas(args.dt)
 
-    mlib.update_sigma(p3d.update_sigma, streamers, streamers_prev,
+    mlib.update_sigma(3, p3d.update_sigma, streamers, streamers_prev,
                       time, args.dt, args.channel_update_delay, step == 1,
                       args.channel_max_sigma)
     t0 = perf_counter()
@@ -328,5 +339,4 @@ for step in range(1, args.n_steps+1):
     wct_output += t0 - t1
 
     streamers = [s for s in streamers if s.keep]
-    if len(streamers) == 0:
-        raise ValueError('All streamers gone')
+

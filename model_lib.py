@@ -41,6 +41,144 @@ class Streamer():
         return r
 
 
+# class AirStreamerModel():
+#     """A class to model the properties of positive streamer discharges in air
+#     based on the length of the high-field region (L_E).
+
+#     Attributes
+#     ----------
+#     E_threshold : float
+#         A threshold value used for fitting data, set to 5e6.
+#     c0 : float
+#         A correction factor for L_E on coarser grids than dz0
+#     c1 : float
+#         A correction factor for L_E on finer grids than dz0
+#     dz0 : float
+#         The grid spacing used when fitting data.
+
+#     Methods
+#     -------
+#     get_radius(L_E)
+#         Calculates the radius of the streamer based on L_E.
+
+#     get_velocity(L_E)
+#         Calculates the velocity of the streamer based on L_E.
+
+#     get_sigma(L_E)
+#         Calculates the line conductivity (sigma) of the streamer based on L_E.
+
+#     get_L_E(z, E, dz=None) Calculates the length of the high-field region
+#         (L_E) based on the electric field data.
+
+#     """
+
+#     E_threshold = 5e6  # Used for fitting data
+
+#     def __init__(self, c0=0.0, c1=0.0, dz0=0.0):
+#         self.c0 = c0
+#         self.c1 = c1
+#         self.dz0 = dz0
+
+#     @staticmethod
+#     def get_radius(L_E):
+#         """Calculate the radius of the streamer.
+
+#         Parameters
+#         ----------
+#         L_E : float or ndarray
+#             The length of the high-field region ahead of the streamer.
+
+#         Returns
+#         -------
+#         float or ndarray
+#             The calculated radius of the streamer.
+
+#         """
+#         R = np.where(L_E < 1e-3,
+#                      2.897e-05 + 1.229 * L_E,
+#                      2.897e-05 + 1.229 * 1e-3 + 6.271e-01 * (L_E - 1e-3))
+#         return R
+
+#     @staticmethod
+#     def get_velocity(L_E):
+#         """Calculate the velocity of the streamer.
+
+#         Parameters
+#         ----------
+#         L_E : float or ndarray
+#             The length of the high-field region ahead of the streamer.
+
+#         Returns
+#         -------
+#         float or ndarray
+#             The calculated velocity of the streamer.
+
+#         """
+#         return 1.78e+09 * L_E
+
+#     @staticmethod
+#     def get_sigma(L_E):
+#         """Calculate the line conductivity (sigma) of the streamer.
+
+#         Parameters
+#         ----------
+#         L_E : float or ndarray
+#             The length of the high-field region ahead of the streamer.
+
+#         Returns
+#         -------
+#         float or ndarray
+#             The calculated line conductivity of the streamer.
+
+#         """
+#         sigma = np.where(L_E < 1e-3,
+#                          1e-8 + 1.397 * L_E**2,
+#                          1e-8 + 1.397 * 1e-6 + (L_E - 1e-3) * 2 * 1.397 * 1e-3)
+#         return sigma
+
+#     def get_L_E(self, z, E, dz=None):
+#         """Calculate the length of the high-field region (L_E) based on the
+#         electric field data.
+
+#         Parameters
+#         ----------
+#         z : ndarray
+#             The spatial coordinates.
+#         E : ndarray
+#             The electric field profile (in the forward direction)
+#         dz : float, optional
+#             The actual grid spacing.
+
+#         Returns
+#         -------
+#         float
+#             The length of the high-field region (L_E).
+
+#         """
+#         # Locate maximum of E
+#         i_max = np.argmax(E)
+
+#         # Determine distance between maximum and threshold.
+#         i_diff = np.argmax(E[i_max:] < self.E_threshold)
+
+#         if i_diff == 0:
+#             # Threshold was not reached (or at domain boundary)
+#             return 0.0
+
+#         i_threshold = i_max + i_diff
+#         # Convert to length
+#         L_E = abs(z[i_threshold] - z[i_max])
+
+#         # Apply correction for finite grid spacing
+#         if dz is not None:
+#             if dz > self.dz0:
+#                 L_E += self.c0 * (dz - self.dz0)
+#             else:
+#                 L_E += self.c1 * (dz - self.dz0)
+
+#         return L_E
+
+
 class AirStreamerModel():
     """A class to model the properties of positive streamer discharges in air
     based on the length of the high-field region (L_E).
@@ -48,7 +186,9 @@ class AirStreamerModel():
     Attributes
     ----------
     E_threshold : float
-        A threshold value used for fitting data, set to 5e6.
+        A threshold value used for fitting data, set to 5e6 V/m.
+    N0 : float
+        Gas number density at 300 K and 1 bar
     c0 : float
         A correction factor for L_E on coarser grids than dz0
     c1 : float
@@ -58,35 +198,37 @@ class AirStreamerModel():
 
     Methods
     -------
-    get_radius(L_E)
+    get_radius(L_E, N)
         Calculates the radius of the streamer based on L_E.
 
-    get_velocity(L_E)
+    get_velocity(L_E, N)
         Calculates the velocity of the streamer based on L_E.
 
-    get_sigma(L_E)
+    get_sigma(L_E, N)
         Calculates the line conductivity (sigma) of the streamer based on L_E.
 
-    get_L_E(z, E, dz=None) Calculates the length of the high-field region
+    get_L_E(z, E, N, dz=None) Calculates the length of the high-field region
         (L_E) based on the electric field data.
 
     """
 
     E_threshold = 5e6  # Used for fitting data
+    N0 = 1e5 / (300 * 1.380649e-23)  # N0 at 300 K and 1 bar
 
     def __init__(self, c0=0.0, c1=0.0, dz0=0.0):
         self.c0 = c0
         self.c1 = c1
         self.dz0 = dz0
 
-    @staticmethod
-    def get_radius(L_E):
+    def get_radius(self, L_E, N):
         """Calculate the radius of the streamer.
 
         Parameters
         ----------
         L_E : float or ndarray
             The length of the high-field region ahead of the streamer.
+        N : float or ndarray
+            The gas number density
 
         Returns
         -------
@@ -94,19 +236,23 @@ class AirStreamerModel():
             The calculated radius of the streamer.
 
         """
-        R = np.where(L_E < 1e-3,
-                     2.897e-05 + 1.229 * L_E,
-                     2.897e-05 + 1.229 * 1e-3 + 6.271e-01 * (L_E - 1e-3))
+
+        L_EN = L_E * N/self.N0
+        R = self.N0/N * np.where(L_EN < 1e-3,
+                                 2.897e-05 + 1.229 * L_EN,
+                                 2.897e-05 + 1.229 * 1e-3 +
+                                 6.271e-01 * (L_EN - 1e-3))
         return R
 
-    @staticmethod
-    def get_velocity(L_E):
+    def get_velocity(self, L_E, N):
         """Calculate the velocity of the streamer.
 
         Parameters
         ----------
         L_E : float or ndarray
             The length of the high-field region ahead of the streamer.
+        N : float or ndarray
+            The gas number density
 
         Returns
         -------
@@ -114,16 +260,18 @@ class AirStreamerModel():
             The calculated velocity of the streamer.
 
         """
-        return 1.78e+09 * L_E
+        L_EN = L_E * N/self.N0
+        return 1.78e+09 * L_EN
 
-    @staticmethod
-    def get_sigma(L_E):
+    def get_sigma(self, L_E, N):
         """Calculate the line conductivity (sigma) of the streamer.
 
         Parameters
         ----------
         L_E : float or ndarray
             The length of the high-field region ahead of the streamer.
+        N : float or ndarray
+            The gas number density
 
         Returns
         -------
@@ -131,12 +279,14 @@ class AirStreamerModel():
             The calculated line conductivity of the streamer.
 
         """
-        sigma = np.where(L_E < 1e-3,
-                         1e-8 + 1.397 * L_E**2,
-                         1e-8 + 1.397 * 1e-6 + (L_E - 1e-3) * 2 * 1.397 * 1e-3)
+        L_EN = L_E * N/self.N0
+        sigma = (self.N0/N)**2 * \
+            np.where(L_EN < 1e-3,
+                     1e-8 + 1.397 * L_EN**2,
+                     1e-8 + 1.397 * 1e-6 + (L_EN - 1e-3) * 2 * 1.397 * 1e-3)
         return sigma
 
-    def get_L_E(self, z, E, dz=None):
+    def get_L_E(self, z, E, N, dz=None):
         """Calculate the length of the high-field region (L_E) based on the
         electric field data.
 
@@ -146,6 +296,8 @@ class AirStreamerModel():
             The spatial coordinates.
         E : ndarray
             The electric field profile (in the forward direction)
+        N : ndarray
+            the gas number density
         dz : float, optional
             The actual grid spacing.
 
@@ -159,7 +311,8 @@ class AirStreamerModel():
         i_max = np.argmax(E)
 
         # Determine distance between maximum and threshold.
-        i_diff = np.argmax(E[i_max:] < self.E_threshold)
+        threshold = self.E_threshold * (N/self.N0)
+        i_diff = np.argmax(E[i_max:] < threshold)
 
         if i_diff == 0:
             # Threshold was not reached (or at domain boundary)
@@ -179,12 +332,13 @@ class AirStreamerModel():
         return L_E
 
 
-def update_sigma(method, streamers_t1, streamers_t0, time, dt,
+def update_sigma(ndim, method, streamers_t1, streamers_t0, time, dt,
                  channel_delay, first_step, max_sigma):
     """
     Update the conductivity for streamers on a grid based on current and previous time steps.
 
     Parameters:
+        ndim: number of spatial dimensions
         method: Function to call for updating the conductivity.
         streamers_t1: List of streamers at the current time step.
         streamers_t0: List of streamers at the previous time step.
@@ -199,17 +353,19 @@ def update_sigma(method, streamers_t1, streamers_t0, time, dt,
         ValueError: If the number of streamers at the current and previous time steps do not match.
     """
     n = len(streamers_t1)
-    ndim = streamers_t1[0].ndim
 
     if len(streamers_t0) != n:
         raise ValueError('Same number of streamers required')
 
-    r = np.zeros((n, ndim))
-    r_prev = np.zeros((n, ndim))
-    sigma = np.zeros(n)
-    sigma_prev = np.zeros(n)
-    radius = np.zeros(n)
-    radius_prev = np.zeros(n)
+    # We cannot easily pass zero-sized arrays, so allocate with at least one
+    # element. Note that n is passed explicitly to method (last argument).
+    m = max(n, 1)
+    r = np.zeros((m, ndim))
+    r_prev = np.zeros((m, ndim))
+    sigma = np.zeros(m)
+    sigma_prev = np.zeros(m)
+    radius = np.zeros(m)
+    radius_prev = np.zeros(m)
 
     for i in range(n):
         r[i] = streamers_t1[i].r
@@ -226,4 +382,4 @@ def update_sigma(method, streamers_t1, streamers_t0, time, dt,
         radius_prev[i] = streamers_t0[i].R
 
     method(r_prev, r, sigma_prev, sigma, radius_prev, radius, time,
-           dt, channel_delay, first_step, max_sigma)
+           dt, channel_delay, first_step, max_sigma, n)

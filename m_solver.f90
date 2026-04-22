@@ -21,6 +21,7 @@ module m_solver
   public :: write_solution
   public :: set_gas
   public :: update_gas
+  public :: get_gas_number_density_at
 
 contains
 
@@ -65,7 +66,7 @@ contains
 
        do n = 1, n_gas_vars
           call af_add_cc_variable(tree, gas_var_names(n), ix=i_gas_vars(n), &
-               n_copies=2)
+               n_copies=2, write_out=.false.)
           call af_add_fc_variable(tree, "flux", ix=i_gas_fluxes(n))
 
           if (coord_t == af_cyl .and. n == i_gas_mom(1)) then
@@ -109,8 +110,6 @@ contains
     real(dp), intent(in) :: f_slow_heat ! Slow heating factor
     real(dp), intent(in) :: tau_slow_heat ! Slow heating time scale (s)
 
-    real(dp), parameter :: Da = 1.66053906892e-27_dp ! Dalton (kg)
-    real(dp), parameter :: k_b = 1.380649e-23_dp ! Boltzmann constant (J/K)
     real(dp)            :: N0, rho, momentum(fndims), energy
 
     if (.not. allocated(tree%boxes)) &
@@ -118,12 +117,14 @@ contains
     if (i_gas_vars(1) == -1) &
          error stop "Gas was not initialized when calling initialize_domain"
 
+    ! Ideal gas law (approximation)
+    N0 = 1e5_dp * pressure / (k_b * temperature)
+
     gas_fast_heating_factor    = f_fast_heat
     gas_slow_heating_factor    = f_slow_heat
     gas_slow_heating_timescale = tau_slow_heat
-
-    ! Ideal gas law (approximation)
-    N0 = 1e5_dp * pressure / (k_b * temperature)
+    gas_inv_molecular_weight   = 1/(mean_molecular_weight * Da)
+    gas_inv_N0                 = 1/N0
 
     ! Set initial gas density
     rho = N0 * mean_molecular_weight * Da
@@ -138,11 +139,32 @@ contains
     call af_loop_box_arg(tree, set_initial_condition_gas, [rho, momentum, energy])
   end subroutine set_gas
 
-  !> Add source terms from the discharge in the Euler equations
-  subroutine update_gas(dt)
-    real(dp), intent(in) :: dt
+  !> Get gas number density at some location
+  subroutine get_gas_number_density_at(r, N, success)
+    real(dp), intent(in)  :: r(fndims)
+    real(dp), intent(out) :: N
+    logical, intent(out)  :: success
+    real(dp)              :: tmp(1)
 
+    tmp = af_interp1(tree, r, [i_gas_vars(i_gas_rho)], success)
+
+    if (success) then
+       N = tmp(1) * gas_inv_molecular_weight
+    else
+       N = 0.0_dp
+    end if
+  end subroutine get_gas_number_density_at
+
+  !> Add source terms from the discharge in the Euler equations
+  subroutine update_gas(dt, max_dt)
+    real(dp), intent(in)  :: dt
+    real(dp), intent(out) :: max_dt     ! Limit on dt due to gas dynamics
+    real(dp)              :: time_dummy ! Unused
+
+    time_dummy = 0.0_dp
     call af_loop_box_arg(tree, add_gas_source_terms, [dt], .true.)
+    call af_advance(tree, dt, max_dt, time_dummy, i_gas_vars, &
+         af_heuns_method, gas_forward_euler)
   end subroutine update_gas
 
   ! Perform uniform initial refinement of the domain
@@ -217,20 +239,21 @@ contains
   end subroutine set_rod_electrode
 
   ! Update sigma (conductivity)
-  subroutine update_sigma(n_streamers, r0, r1, sigma0, sigma1, radius0, radius1, &
-       t, dt, channel_delay, first_step, max_sigma)
-    integer, intent(in)  :: n_streamers
-    real(dp), intent(in) :: r0(n_streamers, fndims), r1(n_streamers, fndims)
-    real(dp), intent(in) :: sigma0(n_streamers), sigma1(n_streamers)
-    real(dp), intent(in) :: radius0(n_streamers), radius1(n_streamers)
+  subroutine update_sigma(n_in, r0, r1, sigma0, sigma1, radius0, radius1, &
+       t, dt, channel_delay, first_step, max_sigma, n_streamers)
+    integer, intent(in)  :: n_in
+    real(dp), intent(in) :: r0(n_in, fndims), r1(n_in, fndims)
+    real(dp), intent(in) :: sigma0(n_in), sigma1(n_in)
+    real(dp), intent(in) :: radius0(n_in), radius1(n_in)
     real(dp), intent(in) :: t
     real(dp), intent(in) :: dt
     real(dp), intent(in) :: channel_delay
     logical, intent(in)  :: first_step
     !> Limit sigma to this value when updating channel conductivity
     real(dp), intent(in) :: max_sigma
+    integer, intent(in)  :: n_streamers
     integer              :: lvl, n, id, IJK, nc, ix, jx
-    real(dp)             :: r(fndims), dist_vec(fndims), r_dist, frac
+    real(dp)             :: r(fndims), dist_vec(fndims), r_dist, frac, fld_Td
     real(dp)             :: k_eff, dsigma, box_rmax(fndims), length, radius
     real(dp)             :: r_min(fndims, n_streamers)
     real(dp)             :: r_max(fndims, n_streamers)
@@ -249,7 +272,7 @@ contains
     if (.not. allocated(k_eff_table)) error stop "Call store_k_eff first"
 
     !$omp parallel private(lvl, n, id, IJK, r, dist_vec, r_dist, &
-    !$omp &frac, ix, k_eff, dsigma, box_rmax, n_in_box, ix_in_box, jx)
+    !$omp &frac, ix, k_eff, dsigma, box_rmax, n_in_box, ix_in_box, jx, fld_Td)
     do lvl = 1, tree%highest_lvl
        !$omp do
        do n = 1, size(tree%lvls(lvl)%leaves)
@@ -296,7 +319,14 @@ contains
                ! has already existed for some time
                if (box%cc(IJK, i_time) < t - channel_delay .and. &
                     box%cc(IJK, i_sigma) > 0.0_dp) then
-                  call get_k_eff(box%cc(IJK, i_E_norm), k_eff)
+                  if (i_gas_vars(1) /= -1) then
+                     fld_Td = box%cc(IJK, i_E_norm) / (box%cc(IJK, i_gas_vars(i_gas_rho)) * &
+                          gas_inv_molecular_weight) * SI_to_Townsend
+                  else
+                     fld_Td = box%cc(IJK, i_E_norm) * gas_inv_N0 * SI_to_Townsend
+                  end if
+
+                  call get_k_eff(fld_Td, k_eff)
 
                   ! Use analytic expression for integral
                   box%cc(IJK, i_dsigma) = (exp(dt * k_eff) - 1.0_dp) * &
@@ -336,13 +366,13 @@ contains
   end subroutine get_sigma_profile
 
   ! Linearly interpolate tabulated data for effective ionization rate
-  subroutine get_k_eff(fld, k_eff)
-    real(dp), intent(in)  :: fld
+  subroutine get_k_eff(fld_Td, k_eff)
+    real(dp), intent(in)  :: fld_Td
     real(dp), intent(out) :: k_eff
     real(dp)              :: frac, low_frac
     integer               :: low_ix
 
-    frac = (fld - k_eff_table_x_min) * k_eff_table_inv_fac
+    frac = (fld_Td - k_eff_table_x_min) * k_eff_table_inv_fac
 
     ! Check bounds
     if (frac <= 0) then
@@ -362,16 +392,16 @@ contains
   end subroutine get_k_eff
 
   ! Store tabulated data for effective ionization rate
-  subroutine store_k_eff(E_min, E_max, n_points, k_eff)
-    real(dp), intent(in) :: E_min, E_max
+  subroutine store_k_eff(Td_min, Td_max, n_points, k_eff)
+    real(dp), intent(in) :: Td_min, Td_max
     integer, intent(in)  :: n_points
     real(dp), intent(in) :: k_eff(n_points)
 
     allocate(k_eff_table(n_points))
     k_eff_table(:) = k_eff
     k_eff_table_n_points = n_points
-    k_eff_table_x_min = E_min
-    k_eff_table_inv_fac = (n_points - 1)/(E_max - E_min)
+    k_eff_table_x_min = Td_min
+    k_eff_table_inv_fac = (n_points - 1)/(Td_max - Td_min)
   end subroutine store_k_eff
 
   ! Get the finest grid spacing of the mesh
@@ -481,12 +511,28 @@ contains
     character(len=*), intent(in) :: fname
     integer, intent(in)          :: i_cycle
     real(dp), intent(in)         :: time
+    character(len=20)            :: gas_primitive_names(fndims+3)
 
     ! Ensure valid ghost cells
     call af_restrict_tree(tree, [i_sigma])
     call af_gc_tree(tree, [i_sigma])
 
-    call af_write_silo(tree, trim(fname), i_cycle, time)
+    if (i_gas_vars(1) == -1) then
+       ! No gas output
+       call af_write_silo(tree, trim(fname), i_cycle, time)
+    else
+       ! Store extra variables for gas
+       gas_primitive_names(1) = "gas_vx"
+       gas_primitive_names(2) = "gas_vy"
+#if fndims == 3
+       gas_primitive_names(3) = "gas_vz"
+#endif
+       gas_primitive_names(fndims+1) = "gas_p"
+       gas_primitive_names(fndims+2) = "gas_N"
+       gas_primitive_names(fndims+3) = "gas_T"
+       call af_write_silo(tree, trim(fname), i_cycle, time, &
+            add_vars=write_gas_primitive, add_names=gas_primitive_names)
+    end if
   end subroutine write_solution
 
 end module m_solver
