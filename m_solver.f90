@@ -22,6 +22,7 @@ module m_solver
   public :: set_gas
   public :: update_gas
   public :: get_gas_number_density_at
+  public :: compute_current
 
 contains
 
@@ -534,5 +535,47 @@ contains
             add_vars=write_gas_primitive, add_names=gas_primitive_names)
     end if
   end subroutine write_solution
+
+  !> Estimate electric current according to Sato's equation V*I = sum(J.E),
+  !> where J includes both the conduction current and the displacement
+  !> current, see 10.1088/0022-3727/32/5/005.
+  !> The latter is computed through the field energy
+  subroutine compute_current(time, J_tot, J_displ)
+    real(dp), intent(in)  :: time
+    real(dp), intent(out) :: J_tot   ! Total current
+    real(dp), intent(out) :: J_displ ! Displacement current
+    real(dp)              :: energy_deriv, JdotE_integral, new_field_energy
+    logical, save         :: first_call        = .true.
+    real(dp), save        :: prev_time         = 0.0_dp
+    real(dp), save        :: prev_field_energy = 0.0_dp
+
+    call compute_field_energy(new_field_energy)
+    call compute_JdotE_integral(JdotE_integral)
+
+    if (first_call) then
+       first_call = .false.
+       energy_deriv = 0.0_dp
+    else
+       ! Time derivative of field energy
+       energy_deriv = (new_field_energy - prev_field_energy)/(time - prev_time)
+    end if
+
+    if (abs(applied_voltage) > 0.0_dp) then
+       J_displ = energy_deriv/applied_voltage
+       J_tot = J_displ + JdotE_integral/applied_voltage
+    else
+       J_displ = 0.0_dp
+       J_tot = 0.0_dp
+    end if
+
+    ! Correct for sign of voltage
+    if (applied_voltage < 0) then
+       J_displ = -J_displ
+       J_tot = -J_tot
+    end if
+
+    prev_time = time
+    prev_field_energy = new_field_energy
+  end subroutine compute_current
 
 end module m_solver

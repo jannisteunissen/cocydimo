@@ -484,4 +484,75 @@ contains
 
   end subroutine write_gas_primitive
 
+  !> Compute total field energy in Joule, defined as the volume integral over
+  !> 1/2 * epsilon * E^2
+  subroutine compute_field_energy(field_energy)
+    real(dp), intent(out) :: field_energy
+
+    call af_reduction(tree, field_energy_box, reduce_sum, 0.0_dp, field_energy)
+  end subroutine compute_field_energy
+
+  !> Compute the integral over J.E over the whole domain
+  subroutine compute_JdotE_integral(JdotE)
+    real(dp), intent(out) :: JdotE
+
+    call af_reduction(tree, sum_JdotE_box, reduce_sum, 0.0_dp, JdotE)
+  end subroutine compute_JdotE_integral
+
+  !> Get the electrostatic field energy in a box
+  real(dp) function field_energy_box(box)
+    type(box_t), intent(in) :: box
+#if fndims == 2
+    integer                 :: i
+    real(dp), parameter     :: twopi = 2 * acos(-1.0_dp)
+#endif
+    real(dp)                :: w(DTIMES(box%n_cell))
+    integer                 :: nc
+
+    nc = box%n_cell
+    w = 0.5_dp * eps0 * product(box%dr)
+
+#if fndims == 2
+    if (box%coord_t == af_cyl) then
+       ! Weight by 2 * pi * r
+       do i = 1, nc
+          w(i, :) = w(i, :) * twopi * af_cyl_radius_cc(box, i)
+       end do
+    end if
+#endif
+
+    field_energy_box = sum(w * box%cc(DTIMES(1:nc), i_E_norm)**2)
+  end function field_energy_box
+
+  !> Get the sum of J dot E in a box
+  real(dp) function sum_JdotE_box(box)
+    type(box_t), intent(in) :: box
+#if fndims == 2
+    integer                 :: i
+    real(dp), parameter     :: twopi = 2 * acos(-1.0_dp)
+#endif
+    real(dp)                :: w(DTIMES(box%n_cell))
+    integer                 :: nc
+
+    nc = box%n_cell
+    w = product(box%dr)
+
+#if fndims == 2
+    if (box%coord_t == af_cyl) then
+       ! Weight by 2 * pi * r
+       do i = 1, nc
+          w(i, :) = w(i, :) * twopi * af_cyl_radius_cc(box, i)
+       end do
+    end if
+#endif
+
+    sum_JdotE_box = sum(w * box%cc(DTIMES(1:nc), i_sigma) * &
+         box%cc(DTIMES(1:nc), i_E_norm)**2)
+  end function sum_JdotE_box
+
+  real(dp) function reduce_sum(a, b)
+    real(dp), intent(in) :: a, b
+    reduce_sum = a + b
+  end function reduce_sum
+
 end module m_solver_lib

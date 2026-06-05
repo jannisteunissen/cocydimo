@@ -230,6 +230,16 @@ wct_update_sigma = 0.0
 wct_poisson = 0.0
 wct_output = 0.0
 time = 0.0
+step = 0
+
+# Write current to a file
+f_current = open(f'{args.siloname}_current.txt', 'w')
+f_current.write('# time(s) J_tot J_displ\n')
+
+J_tot, J_displ = p3d.compute_current(time)
+f_current.write(f'{time:.6e} {J_tot:.6e} {J_displ:.6e}\n')
+f_current.flush()
+
 t_start = perf_counter()
 
 for step in range(1, args.n_steps+1):
@@ -329,6 +339,10 @@ for step in range(1, args.n_steps+1):
     wct_poisson += t1 - t0
 
     time += args.dt
+
+    J_tot, J_displ = p3d.compute_current(time)
+    f_current.write(f'{time:.6e} {J_tot:.6e} {J_displ:.6e}\n')
+    f_current.flush()
 
     # Write output every N steps, with N = args.steps_per_output
     if step % args.steps_per_output == 0:
