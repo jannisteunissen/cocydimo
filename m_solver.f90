@@ -578,6 +578,7 @@ contains
     end if
 
     ! Correct for sign of voltage
+    ! TODO: put electrode on top and remove this sign correction
     if (applied_voltage < 0) then
        J_displ = -J_displ
        J_tot = -J_tot
