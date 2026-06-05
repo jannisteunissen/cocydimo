@@ -474,7 +474,7 @@ contains
     integer, intent(out)  :: n_iterations
     real(dp), intent(out) :: residu
     integer, parameter    :: max_iterations = 100
-    real(dp)              :: prev_residu, max_rhs
+    real(dp)              :: prev_residu, max_rhs, initial_residu
 
     call af_loop_box_arg(tree, set_epsilon_from_sigma, [dt], leaves_only=.true.)
     call af_restrict_tree(tree, [tree%mg_i_eps])
@@ -489,14 +489,23 @@ contains
 
     call af_tree_maxabs_cc(tree, mg%i_rhs, max_rhs)
     prev_residu = huge(1.0_dp)
+    residu = huge(1.0_dp)
+    initial_residu = huge(1.0_dp)
 
     do n_iterations = 1, max_iterations
        call mg_fas_fmg(tree, mg, set_residual=.true., have_guess=.true.)
        call af_tree_maxabs_cc(tree, mg%i_tmp, residu)
 
+       if (n_iterations == 1) initial_residu = residu
        if (residu < rtol * max_rhs .or. residu > 0.5 * prev_residu) exit
        prev_residu = residu
     end do
+
+    if (residu > initial_residu) then
+       print *, "Multigrid residual:     ", residu
+       print *, "Multigrid n_iterations: ", n_iterations
+       error stop "the multigrid solve did not converge, reduce dt?"
+    end if
 
     ! Compute new rhs with standard Laplace operator
     call compute_rhs(tree, mg_lpl)
