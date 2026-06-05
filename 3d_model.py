@@ -40,6 +40,8 @@ parser.add_argument('-r_start', type=float, nargs=3,
                     help='Initial location of initial streamers (m)')
 parser.add_argument('-dt', type=float, default=5e-10,
                     help='Time step (s)')
+parser.add_argument('-dt_factor', type=float, default=1.0,
+                    help='Increase dt by this factor when streamers are gone')
 parser.add_argument('-dz_data', type=float, default=30e-3/256,
                     help='Grid spacing used to obtain L_E from dataset (m)')
 parser.add_argument('-phi_bc', type=float, default=-4e4,
@@ -47,7 +49,8 @@ parser.add_argument('-phi_bc', type=float, default=-4e4,
 parser.add_argument('-alpha', type=float, default=0.5,
                     help='Exponential smoothing coefficient')
 parser.add_argument('-channel_update_delay', type=float, default=1e-9,
-                    help='Delay for first updating channel conductivity (s)')
+                    help='Delay for first updating channel conductivity (s).'
+                    'Should be larger than the dielectric relaxation time.')
 parser.add_argument('-channel_no_ionization', action='store_true',
                     help='Do not increase channel conductivity, which can be '
                     'problematic near domain boundaries)')
@@ -245,6 +248,12 @@ t_start = perf_counter()
 for step in range(1, args.n_steps+1):
     print(f'{step:4d} t = {time*1e9:.1f} ns n_streamers = {len(streamers)}')
 
+    # Potentially increase dt when there are no more streamers
+    if len(streamers) == 0:
+        dt = args.dt * args.dt_factor
+    else:
+        dt = args.dt
+
     if args.print_performance:
         t_total = perf_counter() - t_start
         print(f' refinement: {1e2*wct_refinement/t_total:.2f}% '
@@ -256,7 +265,7 @@ for step in range(1, args.n_steps+1):
     for s in streamers:
         tau_branch = get_tau_branch(s.R, norm(s.v))
 
-        if np.random.exponential(tau_branch) < args.dt:
+        if np.random.exponential(tau_branch) < dt:
             s.is_branching = True
             s.branching_angle = np.random.uniform(0., args.branch_gamma *
                                                   np.pi/180.)
@@ -315,9 +324,9 @@ for step in range(1, args.n_steps+1):
         s.v = model.get_velocity(L_E, N0) * E_hat
 
         dR = min(args.r_scale * model.get_radius(L_E, N0) - s.R,
-                 norm(s.v) * args.dt)
+                 norm(s.v) * dt)
         s.R = s.R + dR
-        s.r = s.r + s.v * (args.dt - 0.99 * dR/norm(s.v))
+        s.r = s.r + s.v * (dt - 0.99 * dR/norm(s.v))
         s.n_steps += 1
 
     t0 = perf_counter()
@@ -326,19 +335,19 @@ for step in range(1, args.n_steps+1):
     wct_refinement += t1 - t0
 
     if args.gas_dynamics:
-        p3d.update_gas(args.dt)
+        p3d.update_gas(dt)
 
     mlib.update_sigma(3, p3d.update_sigma, streamers, streamers_prev,
-                      time, args.dt, args.channel_update_delay, step == 1,
+                      time, dt, args.channel_update_delay, step == 1,
                       args.channel_max_sigma)
     t0 = perf_counter()
     wct_update_sigma += t0 - t1
 
-    p3d.solve(args.dt, args.poisson_rtol)
+    p3d.solve(dt, args.poisson_rtol)
     t1 = perf_counter()
     wct_poisson += t1 - t0
 
-    time += args.dt
+    time += dt
 
     J_tot, J_displ = p3d.compute_current(time)
     f_current.write(f'{time:.6e} {J_tot:.6e} {J_displ:.6e}\n')
