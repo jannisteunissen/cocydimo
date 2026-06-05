@@ -294,7 +294,7 @@ for step in range(1, args.n_steps+1):
                                                args.L_E_max, 2*args.L_E_max/dz)
 
         if success:
-            L_E_new = model.get_L_E(z, E, N0, dz)
+            L_E_new = model.get_L_E(z, E, N0, dz, prev=s.L_E)
         else:
             # Use previous value
             L_E_new = s.L_E

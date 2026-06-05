@@ -148,7 +148,7 @@ class AirStreamerModel():
                      1e-8 + 1.397 * 1e-6 + (L_EN - 1e-3) * 2 * 1.397 * 1e-3)
         return sigma
 
-    def get_L_E(self, z, E, N, dz=None):
+    def get_L_E(self, z, E, N, dz=None, prev=None):
         """Calculate the length of the high-field region (L_E) based on the
         electric field data.
 
@@ -177,8 +177,12 @@ class AirStreamerModel():
         i_diff = np.argmax(E[i_max:] < threshold)
 
         if i_diff == 0:
-            # Threshold was not reached (or at domain boundary)
-            return 0.0
+            if E[i_max:].min() >= threshold:
+                # The field does not drop below the threshold
+                return prev
+            else:
+                # Threshold was not reached
+                return 0.0
 
         i_threshold = i_max + i_diff
         # Convert to length
