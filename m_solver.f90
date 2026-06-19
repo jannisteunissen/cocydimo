@@ -13,6 +13,7 @@ module m_solver
   public :: set_rod_electrode
   public :: update_sigma
   public :: store_k_eff
+  public :: store_parameters
   public :: get_finest_grid_spacing
   public :: get_max_field_location
   public :: get_field_vector_at
@@ -50,15 +51,18 @@ contains
     call af_add_cc_variable(tree, "rhs", ix=mg%i_rhs, write_out=write_rhs)
     call af_add_cc_variable(tree, "tmp", ix=mg%i_tmp, write_out=.false.)
     call af_add_cc_variable(tree, "eps", ix=tree%mg_i_eps, write_out=write_eps)
-    call af_add_cc_variable(tree, "sigma", ix=i_sigma)
-    call af_add_cc_variable(tree, "dsigma", ix=i_dsigma, write_out=.false.)
+    call af_add_cc_variable(tree, "sigma_tot", ix=i_sigma_tot)
+    call af_add_cc_variable(tree, "sigma_e", ix=i_sigma_e)
+    call af_add_cc_variable(tree, "sigma_i", ix=i_sigma_i)
     call af_add_cc_variable(tree, "phi", ix=mg%i_phi)
     call af_add_cc_variable(tree, "electric_fld", ix=i_E_norm)
     call af_add_cc_variable(tree, "time", ix=i_time, write_out=write_time)
     call af_add_fc_variable(tree, "E_vec", ix=i_E_vec)
 
     call af_set_cc_methods(tree, tree%mg_i_eps, af_bc_neumann_zero)
-    call af_set_cc_methods(tree, i_sigma, af_bc_neumann_zero)
+    call af_set_cc_methods(tree, i_sigma_tot, af_bc_neumann_zero)
+    call af_set_cc_methods(tree, i_sigma_e, af_bc_neumann_zero)
+    call af_set_cc_methods(tree, i_sigma_i, af_bc_neumann_zero)
     call af_set_cc_methods(tree, i_E_norm, af_bc_neumann_zero)
     call af_set_cc_methods(tree, i_time, af_bc_neumann_zero)
 
@@ -222,8 +226,8 @@ contains
     type(ref_info_t) :: refine_info
 
     ! Restrict species, for the ghost cells near refinement boundaries
-    call af_restrict_tree(tree, [i_sigma])
-    call af_gc_tree(tree, [i_sigma])
+    call af_restrict_tree(tree, [i_sigma_e, i_sigma_i])
+    call af_gc_tree(tree, [i_sigma_e, i_sigma_i])
 
     call af_adjust_refinement(tree, refinement_criterion, refine_info, 0)
     n_add = refine_info%n_add
@@ -241,7 +245,7 @@ contains
 
   ! Update sigma (conductivity)
   subroutine update_sigma(n_in, r0, r1, sigma0, sigma1, radius0, radius1, &
-       t, dt, channel_delay, first_step, max_sigma, n_streamers)
+       t, dt, channel_delay, first_step, n_streamers)
     integer, intent(in)  :: n_in
     real(dp), intent(in) :: r0(n_in, fndims), r1(n_in, fndims)
     real(dp), intent(in) :: sigma0(n_in), sigma1(n_in)
@@ -251,16 +255,18 @@ contains
     real(dp), intent(in) :: channel_delay
     logical, intent(in)  :: first_step
     !> Limit sigma to this value when updating channel conductivity
-    real(dp), intent(in) :: max_sigma
     integer, intent(in)  :: n_streamers
     integer              :: lvl, n, id, IJK, nc, ix, jx
     real(dp)             :: r(fndims), dist_vec(fndims), r_dist, frac, fld_Td
     real(dp)             :: k_eff, dsigma, box_rmax(fndims), length, radius
+    real(dp)             :: mu_rel, ion_fac
     real(dp)             :: r_min(fndims, n_streamers)
     real(dp)             :: r_max(fndims, n_streamers)
     integer              :: n_in_box, ix_in_box(n_streamers)
 
     nc = tree%n_cell
+    ion_fac = elem_charge * mu_ion
+    mu_rel = mu_ion / mu_electron
 
     ! Determine the extent of channels, with some margin
     do ix = 1, n_streamers
@@ -293,8 +299,6 @@ contains
             end do
 
             do KJI_DO(1, nc)
-               box%cc(IJK, i_dsigma) = 0.0_dp
-
                if (box%cc(IJK, i_lsf) < 0.0_dp) cycle
 
                r = af_r_cc(box, [IJK])
@@ -311,15 +315,16 @@ contains
                      call get_sigma_profile(r_dist, radius0(ix), radius1(ix), frac, &
                           sigma0(ix), sigma1(ix), dsigma)
 
-                     box%cc(IJK, i_dsigma) = box%cc(IJK, i_dsigma) + dsigma
+                     box%cc(IJK, i_sigma_e) = box%cc(IJK, i_sigma_e) + dsigma
+                     box%cc(IJK, i_sigma_i) = box%cc(IJK, i_sigma_i) + dsigma * mu_rel
                      box%cc(IJK, i_time) = t
                   end if
                end do
 
-               ! Update channel conductivity, but only where the channel
-               ! has already existed for some time
+               ! Update channel electron and ion conductivity, but only where
+               ! the channel has already existed for some time
                if (box%cc(IJK, i_time) < t - channel_delay .and. &
-                    box%cc(IJK, i_sigma) > 0.0_dp) then
+                    box%cc(IJK, i_sigma_e) > 0.0_dp) then
                   if (i_gas_vars(1) /= -1) then
                      fld_Td = box%cc(IJK, i_E_norm) / (box%cc(IJK, i_gas_vars(i_gas_rho)) * &
                           gas_inv_molecular_weight) * SI_to_Townsend
@@ -329,12 +334,35 @@ contains
 
                   call get_k_eff(fld_Td, k_eff)
 
-                  ! Use analytic expression for integral
-                  box%cc(IJK, i_dsigma) = (exp(dt * k_eff) - 1.0_dp) * &
-                       box%cc(IJK, i_sigma)
-                  box%cc(IJK, i_dsigma) = min(box%cc(IJK, i_dsigma), &
-                       max_sigma - box%cc(IJK, i_sigma))
+                  ! Electron conductivity change, using analytic expression
+                  ! for integral. Limit growth factor per time step to prevent
+                  ! instabilities.
+                  dsigma = min(2.0_dp, (exp(dt * k_eff) - 1.0_dp)) * box%cc(IJK, i_sigma_e)
+
+                  ! Limit conductivity to at most max_sigma. Relevant in
+                  ! regions where the field remains above the critical field.
+                  dsigma = min(dsigma, max_sigma - box%cc(IJK, i_sigma_e))
+
+                  ! Limit conductivity to at least min_sigma. This allows the
+                  ! electron conductivity to grow at a later time.
+                  dsigma = max(dsigma, min_sigma - box%cc(IJK, i_sigma_e))
+
+                  box%cc(IJK, i_sigma_e) = box%cc(IJK, i_sigma_e) + dsigma
+
+                  ! Ion conductivity change. Any change in electron
+                  ! conductivity produces net ions. TODO: we could separate
+                  ! out attachment and impact ionization.
+                  box%cc(IJK, i_sigma_i) = box%cc(IJK, i_sigma_i) + abs(dsigma) * mu_rel
+
+                  ! Ion recombination
+                  ! n_i(t+dt) = 1/(dt * k_ion_rec + 1/n_i(t))
+                  ! n_i(t) = sigma_i / (e * mu_ion) = sigma_i / ion_fac
+                  box%cc(IJK, i_sigma_i) = ion_fac/(dt * k_ion_rec + &
+                       ion_fac/box%cc(IJK, i_sigma_i))
                end if
+
+               ! Set total sigma
+               box%cc(IJK, i_sigma_tot) = box%cc(IJK, i_sigma_e) + box%cc(IJK, i_sigma_i)
 
             end do; CLOSE_DO
           end associate
@@ -342,9 +370,6 @@ contains
        !$omp end do
     end do
     !$omp end parallel
-
-    ! Add the change in sigma
-    call af_tree_apply(tree, i_sigma, i_dsigma, '+')
 
   end subroutine update_sigma
 
@@ -405,6 +430,22 @@ contains
     k_eff_table_inv_fac = (n_points - 1)/(Td_max - Td_min)
   end subroutine store_k_eff
 
+  ! Store parameters for the model
+  subroutine store_parameters(min_sigma_arg, max_sigma_arg, mu_electron_arg, &
+       mu_ion_arg, k_ion_rec_arg)
+    real(dp), intent(in) :: min_sigma_arg
+    real(dp), intent(in) :: max_sigma_arg
+    real(dp), intent(in) :: mu_electron_arg
+    real(dp), intent(in) :: mu_ion_arg
+    real(dp), intent(in) :: k_ion_rec_arg
+
+    min_sigma = min_sigma_arg
+    max_sigma = max_sigma_arg
+    mu_electron = mu_electron_arg
+    mu_ion = mu_ion_arg
+    k_ion_rec = k_ion_rec_arg
+  end subroutine store_parameters
+
   ! Get the finest grid spacing of the mesh
   subroutine get_finest_grid_spacing(dx_min)
     real(dp), intent(out) :: dx_min
@@ -447,7 +488,7 @@ contains
 
     select case (varname)
     case ('sigma')
-       i_var = i_sigma
+       i_var = i_sigma_tot
     case ('phi')
        i_var = mg%i_phi
     case ('E_norm')
@@ -524,8 +565,8 @@ contains
     character(len=20)            :: gas_primitive_names(fndims+3)
 
     ! Ensure valid ghost cells
-    call af_restrict_tree(tree, [i_sigma])
-    call af_gc_tree(tree, [i_sigma])
+    call af_restrict_tree(tree, [i_sigma_e, i_sigma_i, i_sigma_tot])
+    call af_gc_tree(tree, [i_sigma_e, i_sigma_i, i_sigma_tot])
 
     if (i_gas_vars(1) == -1) then
        ! No gas output

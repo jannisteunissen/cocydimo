@@ -18,12 +18,30 @@ module m_solver_lib
   type(mg_t) :: mg
   type(mg_t) :: mg_lpl
   real(dp)   :: applied_voltage
-  integer    :: i_sigma
+  integer    :: i_sigma_tot
+  integer    :: i_sigma_e
+  integer    :: i_sigma_i
   integer    :: i_E_norm
   integer    :: i_E_vec
-  integer    :: i_dsigma
   integer    :: i_lsf
   integer    :: i_time
+
+  ! Maximum electron conductivity. Relevant in regions where the field remains
+  ! above the critical field.
+  real(dp) :: max_sigma = 5.0_dp
+
+  ! Minimum electron conductivity. This allows the electron conductivity to
+  ! grow again at a later time.
+  real(dp) :: min_sigma = 1e-9_dp
+
+  ! Effective electron mobility, only used to update ion conductivity
+  real(dp) :: mu_electron = 0.04_dp
+
+  ! Effective ion mobility
+  real(dp) :: mu_ion = 2e-4_dp
+
+  ! Ion-ion recombination rate constant (m^3/s)
+  real(dp) :: k_ion_rec = 1e-13_dp
 
   ! For gas dynamics
   real(dp) :: gas_gamma = 1.4_dp
@@ -129,7 +147,7 @@ contains
 
     nc = box%n_cell
     box%cc(DTIMES(1:nc), tree%mg_i_eps) = 1 + (dt_vec(1)/eps0) * &
-         box%cc(DTIMES(1:nc), i_sigma)
+         box%cc(DTIMES(1:nc), i_sigma_tot)
   end subroutine set_epsilon_from_sigma
 
   subroutine compute_rhs(tree, mg)
@@ -276,7 +294,7 @@ contains
 
     do KJI_DO(1, nc)
        ! Joule heating term is sigma * E**2
-       J_dot_E = box%cc(IJK, i_sigma) * box%cc(IJK, i_E_norm)**2 * dt
+       J_dot_E = box%cc(IJK, i_sigma_tot) * box%cc(IJK, i_E_norm)**2 * dt
 
        ! How much energy is released from slow heating
        E_vt_release = box%cc(IJK, i_gas_slow_heat)/gas_slow_heating_timescale * dt
@@ -546,7 +564,7 @@ contains
     end if
 #endif
 
-    sum_JdotE_box = sum(w * box%cc(DTIMES(1:nc), i_sigma) * &
+    sum_JdotE_box = sum(w * box%cc(DTIMES(1:nc), i_sigma_tot) * &
          box%cc(DTIMES(1:nc), i_E_norm)**2)
   end function sum_JdotE_box
 

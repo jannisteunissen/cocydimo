@@ -53,6 +53,16 @@ parser.add_argument('-channel_no_ionization', action='store_true',
 parser.add_argument('-channel_max_sigma', type=float, default=5.0,
                     help='Limit growth of volume conductivity to this value '
                     'to prevent issues at domain boundaries [A/(m V)]')
+parser.add_argument('-channel_min_sigma', type=float, default=1e-9,
+                    help='Keep electron condtivity above this value to allow '
+                    'it to grow again [A/(m V)]')
+parser.add_argument('-mu_electron', type=float, default=0.04,
+                    help='Effective electron mobility at 1 bar, 300 K. '
+                    'mu_e/mu_i is used to update ion conductivity (m2/(V s))')
+parser.add_argument('-mu_ion', type=float, default=2e-4,
+                    help='Effective ion mobility at 1 bar, 300 K')
+parser.add_argument('-k_ion_recombination', type=float, default=1e-13,
+                    help='Ion-ion recombination rate constant (m^3/s)')
 parser.add_argument('-L_E_max', type=float, default=5e-3,
                     help='Maximum value of L_E (m)')
 parser.add_argument('-L_E_min', type=float, default=1e-4,
@@ -151,6 +161,12 @@ if args.channel_no_ionization:
 
 p2d.store_k_eff(x[0], x[-1], y)
 
+p2d.store_parameters(args.channel_min_sigma,
+                     args.channel_max_sigma,
+                     args.mu_electron,
+                     args.mu_ion,
+                     args.k_ion_recombination)
+
 # Get L_E to estimate initial streamer radius
 Emax, r_Emax = p2d.get_max_field_location()
 z, E, success = p2d.get_var_along_line('E_norm', [0.0, r_Emax[1]], [0., 1.0],
@@ -240,8 +256,7 @@ for step in range(1, args.n_steps+1):
         p2d.update_gas(dt)
 
     mlib.update_sigma(2, p2d.update_sigma, streamers, streamers_prev,
-                      time, dt, args.channel_update_delay, step == 1,
-                      args.channel_max_sigma)
+                      time, dt, args.channel_update_delay, step == 1)
     p2d.solve(dt, args.poisson_rtol)
 
     time += dt
