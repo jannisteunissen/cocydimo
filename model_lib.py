@@ -2,6 +2,8 @@
 
 import numpy as np
 
+K_BOLTZMANN = 1.380649e-23  # J/K
+
 
 class Streamer():
     """
@@ -248,3 +250,72 @@ def update_sigma(ndim, method, streamers_t1, streamers_t0, time, dt,
 
     method(r_prev, r, sigma_prev, sigma, radius_prev, radius, time,
            dt, channel_delay, first_step, n)
+
+
+def read_swarm_file(filename):
+    """Parse a swarm-parameter file.
+
+    Returns a dict with:
+        'gas_composition' : {species: fraction, ...}
+        'mobility', 'alpha', 'eta', 'three_body' : (E_N_Td, values) arrays
+    """
+    header_map = {
+        'gas_composition':        'gas_composition',
+        'Mobility':               'mobility',
+        'Townsend ioniz. coef.':  'alpha',
+        'Townsend attach. coef.': 'eta',
+        'Three-body attachment':  'three_body',
+    }
+
+    data = {}
+    current = None
+    rows = []
+
+    def store():
+        if current is None or not rows:
+            return
+        if current == 'gas_composition':
+            data[current] = {p[0]: float(p[1]) for p in (r.split() for r in rows)}
+        else:
+            arr = np.array([[float(x) for x in r.split()] for r in rows])
+            data[current] = (arr[:, 0], arr[:, 1])
+
+    with open(filename) as f:
+        for line in (l.strip() for l in f):
+            if not line or line.startswith('-'):
+                continue
+            new = next((name for key, name in header_map.items()
+                        if line.startswith(key)), None)
+            if new is not None:        # header line -> start a new section
+                store()
+                current, rows = new, []
+            else:                      # data line
+                rows.append(line)
+    store()
+    return data
+
+
+def effective_ionization_rate(filename, gas_temperature, pressure_bar):
+    """Compute the effective ionization rate coefficient [1/s].
+
+    k_eff = v_drift * (alpha - eta - k3 * N_O2)
+    """
+    data = read_swarm_file(filename)
+
+    # Number density (ideal gas law) and O2 density
+    N = pressure_bar * 1e5 / (K_BOLTZMANN * gas_temperature)  # [1/m^3]
+    N_O2 = data['gas_composition'].get('O2', 0.0) * N      # [1/m^3]
+
+    # Reduced field in Townsend (1 Td = 1e-21 V m^2)
+    E_over_N_Td = data['alpha'][0]
+
+    interp = lambda key: np.interp(E_over_N_Td, *data[key])
+    muN   = interp('mobility')
+    alpha = interp('alpha') * N           # ionization     [1/m]
+    eta   = interp('eta') * N             # attachment     [1/m]
+    k3    = interp('three_body')          # 3-body rate    [m^6/s]
+
+    v_drift = muN * E_over_N_Td * 1e-21  # [m/s]
+    k_eff = v_drift * (alpha - eta) - k3 * N_O2**2
+
+    return E_over_N_Td, k_eff

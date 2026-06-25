@@ -75,9 +75,9 @@ parser.add_argument('-c0_L_E_dx', type=float, default=0.75,
                     help='Correction factor for L_E w.r.t. data grid spacing')
 parser.add_argument('-c1_L_E_dx', type=float, default=0.0,
                     help='Correction factor for L_E when dx < dx_data')
-parser.add_argument('-k_eff_file', type=str,
-                    default='data/k_eff_air_Phelps.txt',
-                    help='File with k_eff (1/s) vs electric field (Td)')
+parser.add_argument('-transport_data_file', type=str,
+                    default='data/TD_N2_0.8_Phelps_O2_0.2_Phelps.txt',
+                    help='Transport data file')
 parser.add_argument('-k_eff_num_points', type=int, default=200,
                     help='Number of points to use internally for k_eff_table')
 parser.add_argument('-poisson_rtol', type=float, default=1e-5,
@@ -200,7 +200,8 @@ p3d.solve(0.0, args.poisson_rtol)
 p3d.write_solution(f'{args.siloname}_{0:04d}', 0, 0.)
 
 # Set table with effective ionization rate
-table_fld, table_k_eff = np.loadtxt(args.k_eff_file).T
+table_fld, table_k_eff = mlib.effective_ionization_rate(
+    args.transport_data_file, args.temperature, args.pressure)
 
 # Ensure table has uniform spacing
 x = np.linspace(table_fld[0], table_fld[-1], args.k_eff_num_points)
