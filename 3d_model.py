@@ -88,6 +88,8 @@ parser.add_argument('-k_eff_num_points', type=int, default=200,
                     help='Number of points to use internally for k_eff_table')
 parser.add_argument('-poisson_rtol', type=float, default=1e-5,
                     help='Relative tolerance for Poisson solver')
+parser.add_argument('-poisson_atol', type=float, default=1.0,
+                    help='Absolute tolerance for Poisson solver')
 parser.add_argument('-siloname', type=str, default='output/simulation_3d',
                     help='Base filename for output Silo files')
 parser.add_argument('-write_eps', action='store_true',
@@ -188,7 +190,7 @@ p3d.initialize_domain(args.domain_size, args.coarse_grid_size,
 p3d.set_refinement(args.refine_E, args.derefine_E,
                    args.min_dx, args.max_dx,
                    args.max_dx_electrode, args.derefine_nlevels,
-                   args.poisson_rtol)
+                   args.poisson_rtol, args.poisson_atol)
 
 # Initial gas density
 N0 = 1e5 * args.pressure / (args.temperature * 1.380649e-23)
@@ -202,7 +204,7 @@ dz = p3d.get_finest_grid_spacing()
 print(f'Minimum grid spacing: {dz:.2e}')
 
 # Compute initial solution
-p3d.solve(0.0, args.poisson_rtol)
+p3d.solve(0.0, args.poisson_rtol, args.poisson_atol)
 p3d.write_solution(f'{args.siloname}_{0:04d}', 0, 0.)
 
 # Set table with effective ionization rate
@@ -369,7 +371,7 @@ for step in range(1, args.n_steps+1):
     t0 = perf_counter()
     wct_update_sigma += t0 - t1
 
-    p3d.solve(dt, args.poisson_rtol)
+    p3d.solve(dt, args.poisson_rtol, args.poisson_atol)
     t1 = perf_counter()
     wct_poisson += t1 - t0
 

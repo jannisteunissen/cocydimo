@@ -84,6 +84,8 @@ parser.add_argument('-k_eff_num_points', type=int, default=200,
                     help='Number of points to use internally for k_eff_table')
 parser.add_argument('-poisson_rtol', type=float, default=1e-5,
                     help='Relative tolerance for Poisson solver')
+parser.add_argument('-poisson_atol', type=float, default=1.0,
+                    help='Absolute tolerance for Poisson solver')
 parser.add_argument('-siloname', type=str, default='output/simulation_2d',
                     help='Base filename for output Silo files')
 parser.add_argument('-write_eps', action='store_true',
@@ -152,7 +154,7 @@ dz = p2d.get_finest_grid_spacing()
 print(f'Minimum grid spacing: {dz:.2e}')
 
 # Compute initial solution
-p2d.solve(0.0, args.poisson_rtol)
+p2d.solve(0.0, args.poisson_rtol, args.poisson_atol)
 p2d.write_solution(f'{args.siloname}_{0:04d}', 0, 0.)
 
 # Set table with effective ionization rate
@@ -268,7 +270,7 @@ for step in range(1, args.n_steps+1):
 
     mlib.update_sigma(2, p2d.update_sigma, streamers, streamers_prev,
                       time, dt, args.channel_update_delay, step == 1)
-    p2d.solve(dt, args.poisson_rtol)
+    p2d.solve(dt, args.poisson_rtol, args.poisson_atol)
 
     time += dt
 

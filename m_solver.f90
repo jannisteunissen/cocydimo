@@ -205,7 +205,7 @@ contains
 
   ! Set initial grid refinement
   subroutine set_refinement(refine_field, derefine_field, &
-       min_dx, max_dx, electrode_max_dx, derefine_levels, rtol)
+       min_dx, max_dx, electrode_max_dx, derefine_levels, rtol, atol)
     real(dp), intent(in) :: refine_field     ! Refine when the field is above this value
     real(dp), intent(in) :: derefine_field   ! Derefine when the field is below this value
     real(dp), intent(in) :: min_dx           ! Minimum allowed grid spacing
@@ -213,6 +213,7 @@ contains
     real(dp), intent(in) :: electrode_max_dx ! Maximum grid spacing around electrode
     integer, intent(in)  :: derefine_levels  ! How many levels can be derefined
     real(dp), intent(in) :: rtol             ! Relative tolerance for Poisson solver
+    real(dp), intent(in) :: atol             ! Absolute tolerance for Poisson solver
     integer              :: n_add, n, n_its
     real(dp)             :: residu
 
@@ -224,7 +225,7 @@ contains
     ! Finest dx is between min_dx and 2*min_dx; only derefine when dx < derefine_dx
     derefine_dx              = min_dx * 2**derefine_levels
 
-    call solve(0.0_dp, rtol, n_its, residu)
+    call solve(0.0_dp, rtol, atol, n_its, residu)
 
     do n = 1, 20
        call adjust_refinement(n_add)
@@ -232,7 +233,7 @@ contains
 
        ! Reset r.h.s. since we are not advancing in time
        call af_tree_clear_cc(tree, mg%i_rhs)
-       call solve(0.0_dp, rtol, n_its, residu)
+       call solve(0.0_dp, rtol, atol, n_its, residu)
     end do
   end subroutine set_refinement
 
@@ -531,13 +532,15 @@ contains
   end subroutine get_var_along_line
 
   ! Compute new potential for a given time step using the current sigma
-  subroutine solve(dt, rtol, n_iterations, residu)
+  subroutine solve(dt, rtol, atol, n_iterations, residu)
     real(dp), intent(in)  :: dt
     real(dp), intent(in)  :: rtol
+    real(dp), intent(in)  :: atol
     integer, intent(out)  :: n_iterations
     real(dp), intent(out) :: residu
     integer, parameter    :: max_iterations = 100
     real(dp)              :: prev_residu, max_rhs, initial_residu
+    logical               :: converged
 
     call af_loop_box_arg(tree, set_epsilon_from_sigma, [dt], leaves_only=.true.)
     call af_restrict_tree(tree, [tree%mg_i_eps])
@@ -552,19 +555,20 @@ contains
 
     call af_tree_maxabs_cc(tree, mg%i_rhs, max_rhs)
     prev_residu = huge(1.0_dp)
-    residu = huge(1.0_dp)
     initial_residu = huge(1.0_dp)
+    converged = .false.
 
     do n_iterations = 1, max_iterations
        call mg_fas_fmg(tree, mg, set_residual=.true., have_guess=.true.)
        call af_tree_maxabs_cc(tree, mg%i_tmp, residu)
-
        if (n_iterations == 1) initial_residu = residu
-       if (residu < rtol * max_rhs .or. residu > 0.5 * prev_residu) exit
+
+       converged = (residu < max(atol, rtol * max_rhs))
+       if (converged .or. residu > 1e2_dp * initial_residu) exit
        prev_residu = residu
     end do
 
-    if (residu > initial_residu) then
+    if (.not. converged) then
        print *, "Multigrid residual:     ", residu
        print *, "Multigrid n_iterations: ", n_iterations
        error stop "the multigrid solve did not converge, reduce dt?"
