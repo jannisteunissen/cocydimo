@@ -17,7 +17,6 @@ module m_solver_lib
   type(af_t) :: tree
   type(mg_t) :: mg
   type(mg_t) :: mg_lpl
-  real(dp)   :: applied_voltage
   integer    :: i_sigma_tot
   integer    :: i_sigma_e
   integer    :: i_sigma_i
@@ -25,6 +24,13 @@ module m_solver_lib
   integer    :: i_E_vec
   integer    :: i_lsf
   integer    :: i_time
+
+  ! For simple R-C circuit
+  real(dp) :: C_gap = 0.0_dp             ! Geometric gap capacitance [F]
+  real(dp) :: applied_voltage = 0.0_dp   ! Gap voltage [V]
+  real(dp) :: capacitor_voltage = 0.0_dp ! Capacitor voltage [V]
+  real(dp) :: rc_resistance = 0.0_dp ! RC resistance [Ohm]
+  real(dp) :: rc_capacitance = 0.0_dp ! RC capacitance [farad]
 
   ! Maximum electron conductivity. Relevant in regions where the field remains
   ! above the critical field.

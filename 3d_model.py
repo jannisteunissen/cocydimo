@@ -46,6 +46,12 @@ parser.add_argument('-dz_data', type=float, default=30e-3/256,
                     help='Grid spacing used to obtain L_E from dataset (m)')
 parser.add_argument('-phi_bc', type=float, default=-4e4,
                     help='Applied potential (V)')
+parser.add_argument('-use_circuit', action='store_true',
+                    help='Use R-C circuit for voltage source')
+parser.add_argument('-capacitance', type=float, default=1e-9,
+                    help='Capacitance C of the voltage source (farad)')
+parser.add_argument('-resistance', type=float, default=300.0,
+                    help='Internal resistance R of the voltage source (Ohm)')
 parser.add_argument('-alpha', type=float, default=0.5,
                     help='Exponential smoothing coefficient')
 parser.add_argument('-channel_update_delay', type=float, default=1e-9,
@@ -216,7 +222,9 @@ p3d.store_parameters(args.channel_min_sigma,
                      args.channel_max_sigma,
                      args.mu_electron,
                      args.mu_ion,
-                     args.k_ion_recombination)
+                     args.k_ion_recombination,
+                     args.resistance,
+                     args.capacitance)
 
 if args.r_start is not None:
     r_start = np.array(args.r_start)
@@ -250,13 +258,15 @@ wct_update_sigma = 0.0
 wct_poisson = 0.0
 wct_output = 0.0
 time = 0.0
+V_cap = args.phi_bc
+V_gap = args.phi_bc
 step = 0
 
 # Write current to a file
 f_current = open(f'{args.siloname}_current.txt', 'w')
 f_current.write('# time(s) J_tot J_displ\n')
 
-J_tot, J_displ = p3d.compute_current(time)
+J_tot, J_displ, G_eff = p3d.compute_current(time)
 f_current.write(f'{time:.6e} {J_tot:.6e} {J_displ:.6e}\n')
 f_current.flush()
 
@@ -365,8 +375,13 @@ for step in range(1, args.n_steps+1):
 
     time += dt
 
-    J_tot, J_displ = p3d.compute_current(time)
-    f_current.write(f'{time:.6e} {J_tot:.6e} {J_displ:.6e}\n')
+    J_tot, J_displ, G_eff = p3d.compute_current(time)
+
+    if args.use_circuit:
+        V_cap, V_gap = p3d.update_voltage_rc(dt, G_eff)
+
+    f_current.write(f'{time:.6e} {J_tot:.6e} {J_displ:.6e} '
+                    f'{V_gap:.6e} {V_cap:.6e}\n')
     f_current.flush()
 
     # Write output every N steps, with N = args.steps_per_output

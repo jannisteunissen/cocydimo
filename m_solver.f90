@@ -11,6 +11,8 @@ module m_solver
   public :: set_refinement
   public :: adjust_refinement
   public :: set_rod_electrode
+  public :: set_voltage
+  public :: update_voltage_rc
   public :: update_sigma
   public :: store_k_eff
   public :: store_parameters
@@ -46,6 +48,7 @@ contains
     if (fndims == 2) coord_t = af_cyl
 
     applied_voltage = voltage
+    capacitor_voltage = voltage
 
     call af_add_cc_variable(tree, "phi", ix=mg%i_phi)
     call af_add_cc_variable(tree, "rhs", ix=mg%i_rhs, write_out=write_rhs)
@@ -102,6 +105,14 @@ contains
     ! Create a copy of the operator but without the variable coefficient
     mg_lpl = mg
     mg_lpl%operator_mask = mg_normal_box + mg_lsf_box
+
+    ! Estimate initial gap capacitance, used in RC model
+    if (coord_t == af_cyl) then
+       C_gap = eps0 * pi * domain_len(1)**2 / domain_len(fndims)
+    else
+       C_gap = eps0 * product(domain_len(1:2)) / domain_len(fndims)
+    end if
+
   end subroutine initialize_domain
 
   !> Set initial state for gas
@@ -143,6 +154,12 @@ contains
     ! Set initial density, momentum and energy in domain
     call af_loop_box_arg(tree, set_initial_condition_gas, [rho, momentum, energy])
   end subroutine set_gas
+
+  subroutine set_voltage(voltage)
+    real(dp), intent(in) :: voltage
+
+    applied_voltage = voltage
+  end subroutine set_voltage
 
   !> Get gas number density at some location
   subroutine get_gas_number_density_at(r, N, success)
@@ -432,18 +449,23 @@ contains
 
   ! Store parameters for the model
   subroutine store_parameters(min_sigma_arg, max_sigma_arg, mu_electron_arg, &
-       mu_ion_arg, k_ion_rec_arg)
+       mu_ion_arg, k_ion_rec_arg, resistance, capacitance)
     real(dp), intent(in) :: min_sigma_arg
     real(dp), intent(in) :: max_sigma_arg
     real(dp), intent(in) :: mu_electron_arg
     real(dp), intent(in) :: mu_ion_arg
     real(dp), intent(in) :: k_ion_rec_arg
+    real(dp), intent(in) :: resistance
+    real(dp), intent(in) :: capacitance
 
     min_sigma = min_sigma_arg
     max_sigma = max_sigma_arg
     mu_electron = mu_electron_arg
     mu_ion = mu_ion_arg
     k_ion_rec = k_ion_rec_arg
+
+    rc_resistance = resistance
+    rc_capacitance = capacitance
   end subroutine store_parameters
 
   ! Get the finest grid spacing of the mesh
@@ -590,10 +612,11 @@ contains
   !> where J includes both the conduction current and the displacement
   !> current, see 10.1088/0022-3727/32/5/005.
   !> The latter is computed through the field energy
-  subroutine compute_current(time, J_tot, J_displ)
+  subroutine compute_current(time, J_tot, J_displ, gap_conductance)
     real(dp), intent(in)  :: time
     real(dp), intent(out) :: J_tot   ! Total current
     real(dp), intent(out) :: J_displ ! Displacement current
+    real(dp), intent(out) :: gap_conductance ! Effective gap conductance
     real(dp)              :: energy_deriv, JdotE_integral, new_field_energy
     logical, save         :: first_call        = .true.
     real(dp), save        :: prev_time         = 0.0_dp
@@ -618,15 +641,42 @@ contains
        J_tot = 0.0_dp
     end if
 
-    ! Correct for sign of voltage
-    ! TODO: put electrode on top and remove this sign correction
-    if (applied_voltage < 0) then
-       J_displ = -J_displ
-       J_tot = -J_tot
-    end if
-
+    gap_conductance = JdotE_integral/applied_voltage**2
     prev_time = time
     prev_field_energy = new_field_energy
   end subroutine compute_current
+
+  !> Update voltage according to simple RC circuit model. Uses a fixed
+  !> geometric C_gap and a conductance G for the conduction current.
+  !>
+  !> Topology:
+  !>     V_C --[C]-- gnd ,  V_C --[R]-- V_gap --( C_gap || G )-- gnd
+  !>
+  !>   C   dV_C/dt   = -(V_C - V_gap)/R
+  !>   C_gap dV_gap/dt = (V_C - V_gap)/R - G*V_gap
+  subroutine update_voltage_rc(dt, gap_conductance, V_cap, V_gap)
+    real(dp), intent(in)  :: dt, gap_conductance
+    real(dp), intent(out) :: V_cap, V_gap
+    real(dp)              :: Vc, Vg, a, b, g, det
+
+    Vc = capacitor_voltage
+    Vg = applied_voltage
+
+    ! Use a backward Euler approach, which is stable when dt > RC and when dt
+    ! > C_gap/gap_conductance
+    a = dt/(rc_resistance*rc_capacitance)
+    b = dt/(rc_resistance*C_gap)
+    g = dt*gap_conductance/C_gap
+
+    ! Solve the 2x2 implicit system:
+    !   (1+a) Vc_new -  a     Vg_new = Vc
+    !   -b    Vc_new + (1+b+g)Vg_new = Vg
+    det = (1.0_dp+a)*(1.0_dp+b+g) - a*b
+
+    V_cap = ((1.0_dp+b+g)*Vc + a*Vg) / det
+    V_gap = ((1.0_dp+a)*Vg   + b*Vc) / det
+    capacitor_voltage = V_cap
+    applied_voltage = V_gap
+  end subroutine update_voltage_rc
 
 end module m_solver
