@@ -350,6 +350,9 @@ contains
                      fld_Td = box%cc(IJK, i_E_norm) * gas_inv_N0 * SI_to_Townsend
                   end if
 
+                  ! TODO: include scaling of k_eff with gas density. It would
+                  ! also be good to split into ionization, attachment and
+                  ! recombination (to better update ion conductivity)
                   call get_k_eff(fld_Td, k_eff)
 
                   ! Electron conductivity change, using analytic expression
