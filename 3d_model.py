@@ -142,6 +142,8 @@ parser.add_argument('-gas_slow_heat_factor', type=float, default=0.0,
                     'to gas heating')
 parser.add_argument('-gas_slow_heat_timescale', type=float, default=20.0e-6,
                     help='Time scale for slow heating (s)')
+parser.add_argument('-verbose', type=int, default=0,
+                    help='How verbose the code is (> 0 shows more info)')
 
 args = parser.parse_args()
 
@@ -179,6 +181,15 @@ def find_orthogonal_unit_vector(y):
     orthvec = np.cross(y, np.random.uniform(-1., 1., 3))
     return orthvec / norm(orthvec)
 
+
+p3d.store_parameters(args.channel_min_sigma,
+                     args.channel_max_sigma,
+                     args.mu_electron,
+                     args.mu_ion,
+                     args.k_ion_recombination,
+                     args.resistance,
+                     args.capacitance,
+                     args.verbose)
 
 p3d.set_rod_electrode(args.rod_r0, args.rod_r1, args.rod_radius)
 
@@ -220,14 +231,6 @@ if args.channel_no_ionization:
 
 p3d.store_k_eff(x[0], x[-1], y)
 
-p3d.store_parameters(args.channel_min_sigma,
-                     args.channel_max_sigma,
-                     args.mu_electron,
-                     args.mu_ion,
-                     args.k_ion_recombination,
-                     args.resistance,
-                     args.capacitance)
-
 if args.r_start is not None:
     r_start = np.array(args.r_start)
 else:
@@ -239,7 +242,7 @@ z, E, success = p3d.get_var_along_line('E_norm', r_start, [0., 0., 1.0],
                                        args.L_E_max, 2*args.L_E_max/dz)
 if not success:
     raise RuntimeError('Interpolation error at r_start')
-L_E = model.get_L_E(z, E, N0, dz)
+L_E = model.get_L_E(z, E, N0, dz, prev=args.L_E_max)
 
 # Start with a smaller radius to approximate initial phase
 radius0 = 0.5 * args.r_scale * model.get_radius(L_E, N0)

@@ -25,6 +25,9 @@ module m_solver_lib
   integer    :: i_lsf
   integer    :: i_time
 
+  ! How verbose the code is
+  integer :: verbose = 0
+
   ! For simple R-C circuit
   real(dp) :: C_gap = 0.0_dp             ! Geometric gap capacitance [F]
   real(dp) :: applied_voltage = 0.0_dp   ! Gap voltage [V]
@@ -349,9 +352,11 @@ contains
   subroutine to_primitive(n_values, n_vars, u)
     integer, intent(in)     :: n_values, n_vars
     real(dp), intent(inout) :: u(n_values, n_vars)
+    integer                 :: i
 
-    u(:, i_gas_mom(1)) = u(:, i_gas_mom(1))/u(:, i_gas_rho)
-    u(:, i_gas_mom(2)) = u(:, i_gas_mom(2))/u(:, i_gas_rho)
+    do i = 1, fndims
+       u(:, i_gas_mom(i)) = u(:, i_gas_mom(i)) / u(:, i_gas_rho)
+    end do
     u(:, i_gas_e) = (gas_gamma-1.0_dp) * (u(:, i_gas_e) - &
          0.5_dp*u(:, i_gas_rho)* sum(u(:, i_gas_mom(:))**2, dim=2))
   end subroutine to_primitive

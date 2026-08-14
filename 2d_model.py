@@ -118,6 +118,8 @@ parser.add_argument('-gas_slow_heat_factor', type=float, default=0.0,
                     'to gas heating')
 parser.add_argument('-gas_slow_heat_timescale', type=float, default=20.0e-6,
                     help='Time scale for slow heating (s)')
+parser.add_argument('-verbose', type=int, default=0,
+                    help='How verbose the code is (> 0 shows more info)')
 
 args = parser.parse_args()
 
@@ -134,6 +136,15 @@ model = mlib.AirStreamerModel(c0=args.c0_L_E_dx, c1=args.c1_L_E_dx,
                               dz0=args.dz_data)
 
 np.random.seed(args.rng_seed)
+
+p2d.store_parameters(args.channel_min_sigma,
+                     args.channel_max_sigma,
+                     args.mu_electron,
+                     args.mu_ion,
+                     args.k_ion_recombination,
+                     args.resistance,
+                     args.capacitance,
+                     args.verbose)
 
 p2d.set_rod_electrode(args.rod_r0, args.rod_r1, args.rod_radius)
 p2d.initialize_domain(args.domain_size, args.coarse_grid_size,
@@ -169,14 +180,6 @@ if args.channel_no_ionization:
     y = np.minimum(y, 0.0)
 
 p2d.store_k_eff(x[0], x[-1], y)
-
-p2d.store_parameters(args.channel_min_sigma,
-                     args.channel_max_sigma,
-                     args.mu_electron,
-                     args.mu_ion,
-                     args.k_ion_recombination,
-                     args.resistance,
-                     args.capacitance)
 
 # Get L_E to estimate initial streamer radius
 Emax, r_Emax = p2d.get_max_field_location()

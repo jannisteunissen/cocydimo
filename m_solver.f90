@@ -44,6 +44,8 @@ contains
     logical, intent(in)  :: gas_dynamics             ! Simulate gas dynamics
     integer              :: coord_t, n
 
+    if (verbose > 0) print *, "log: initialize_domain()"
+
     coord_t = af_xyz
     if (fndims == 2) coord_t = af_cyl
 
@@ -57,7 +59,6 @@ contains
     call af_add_cc_variable(tree, "sigma_tot", ix=i_sigma_tot)
     call af_add_cc_variable(tree, "sigma_e", ix=i_sigma_e)
     call af_add_cc_variable(tree, "sigma_i", ix=i_sigma_i)
-    call af_add_cc_variable(tree, "phi", ix=mg%i_phi)
     call af_add_cc_variable(tree, "electric_fld", ix=i_E_norm)
     call af_add_cc_variable(tree, "time", ix=i_time, write_out=write_time)
     call af_add_fc_variable(tree, "E_vec", ix=i_E_vec)
@@ -113,6 +114,8 @@ contains
        C_gap = eps0 * product(domain_len(1:2)) / domain_len(fndims)
     end if
 
+    if (verbose > 0) print *, "log: initialize_domain() done"
+
   end subroutine initialize_domain
 
   !> Set initial state for gas
@@ -136,6 +139,8 @@ contains
     ! Ideal gas law (approximation)
     N0 = 1e5_dp * pressure / (k_b * temperature)
 
+    gas_gamma = gamma
+    gas_inv_gamma_m1 = 1/(gamma - 1)
     gas_fast_heating_factor    = f_fast_heat
     gas_slow_heating_factor    = f_slow_heat
     gas_slow_heating_timescale = tau_slow_heat
@@ -149,7 +154,7 @@ contains
     momentum = 0.0_dp
 
     ! Initial energy
-    energy = pressure * 1e5_dp / (gas_gamma - 1)
+    energy = pressure * 1e5_dp / (gamma - 1)
 
     ! Set initial density, momentum and energy in domain
     call af_loop_box_arg(tree, set_initial_condition_gas, [rho, momentum, energy])
@@ -217,6 +222,8 @@ contains
     integer              :: n_add, n, n_its
     real(dp)             :: residu
 
+    if (verbose > 0) print *, "log: set_refinement()"
+
     refine_field_threshold   = refine_field
     derefine_field_threshold = derefine_field
     refine_min_dx            = min_dx
@@ -228,6 +235,7 @@ contains
     call solve(0.0_dp, rtol, atol, n_its, residu)
 
     do n = 1, 20
+       if (verbose > 0) print *, "log: iteration", n
        call adjust_refinement(n_add)
        if (n_add == 0) exit
 
@@ -235,6 +243,8 @@ contains
        call af_tree_clear_cc(tree, mg%i_rhs)
        call solve(0.0_dp, rtol, atol, n_its, residu)
     end do
+
+    if (verbose > 0) print *, "log: set_refinement() done"
   end subroutine set_refinement
 
   ! Update the refinement of the mesh. Changes the local refinement by at most
@@ -243,12 +253,16 @@ contains
     integer, intent(out) :: n_add
     type(ref_info_t) :: refine_info
 
+    if (verbose > 0) print *, "log: adjust_refinement()"
+
     ! Restrict species, for the ghost cells near refinement boundaries
     call af_restrict_tree(tree, [i_sigma_e, i_sigma_i])
     call af_gc_tree(tree, [i_sigma_e, i_sigma_i])
 
     call af_adjust_refinement(tree, refinement_criterion, refine_info, 0)
     n_add = refine_info%n_add
+
+    if (verbose > 0) print *, "log: adjust_refinement() done"
   end subroutine adjust_refinement
 
   ! Specify geometry of rod electrode
@@ -280,7 +294,10 @@ contains
     real(dp)             :: mu_rel, ion_fac
     real(dp)             :: r_min(fndims, n_streamers)
     real(dp)             :: r_max(fndims, n_streamers)
+    real(dp)             :: ra(fndims), rb(fndims)
     integer              :: n_in_box, ix_in_box(n_streamers)
+
+    if (verbose > 0) print *, "log: update_sigma()"
 
     nc = tree%n_cell
     ion_fac = elem_charge * mu_ion
@@ -296,7 +313,7 @@ contains
 
     if (.not. allocated(k_eff_table)) error stop "Call store_k_eff first"
 
-    !$omp parallel private(lvl, n, id, IJK, r, dist_vec, r_dist, &
+    !$omp parallel private(lvl, n, id, IJK, r, dist_vec, r_dist, ra, rb, &
     !$omp &frac, ix, k_eff, dsigma, box_rmax, n_in_box, ix_in_box, jx, fld_Td)
     do lvl = 1, tree%highest_lvl
        !$omp do
@@ -317,18 +334,21 @@ contains
             end do
 
             do KJI_DO(1, nc)
-               if (box%cc(IJK, i_lsf) < 0.0_dp) cycle
+               if (rod_radius > 0) then
+                  if (box%cc(IJK, i_lsf) < 0.0_dp) cycle
+               end if
 
                r = af_r_cc(box, [IJK])
 
                do jx = 1, n_in_box
                   ix = ix_in_box(jx)
-                  call dist_vec_line(r, r0(ix, :), r1(ix, :), &
-                       fndims, dist_vec, r_dist, frac)
+                  ra(:) = r0(ix, :)
+                  rb(:) = r1(ix, :)
+                  call dist_vec_line(r, ra, rb, fndims, dist_vec, r_dist, frac)
 
                   ! Exclude semi-sphere of previous point
                   if (norm2(dist_vec) <= radius1(ix) .and. (first_step .or. &
-                       (frac >= 0 .and. norm2(r0(ix, :) - r) > radius0(ix)))) then
+                       (frac >= 0 .and. norm2(ra - r) > radius0(ix)))) then
 
                      call get_sigma_profile(r_dist, radius0(ix), radius1(ix), frac, &
                           sigma0(ix), sigma1(ix), dsigma)
@@ -392,6 +412,8 @@ contains
     end do
     !$omp end parallel
 
+    if (verbose > 0) print *, "log: update_sigma() done"
+
   end subroutine update_sigma
 
   subroutine get_sigma_profile(r_dist, radius0, radius1, z_frac, s0, s1, dsigma)
@@ -453,7 +475,7 @@ contains
 
   ! Store parameters for the model
   subroutine store_parameters(min_sigma_arg, max_sigma_arg, mu_electron_arg, &
-       mu_ion_arg, k_ion_rec_arg, resistance, capacitance)
+       mu_ion_arg, k_ion_rec_arg, resistance, capacitance, verbose_arg)
     real(dp), intent(in) :: min_sigma_arg
     real(dp), intent(in) :: max_sigma_arg
     real(dp), intent(in) :: mu_electron_arg
@@ -461,6 +483,7 @@ contains
     real(dp), intent(in) :: k_ion_rec_arg
     real(dp), intent(in) :: resistance
     real(dp), intent(in) :: capacitance
+    integer, intent(in)  :: verbose_arg
 
     min_sigma = min_sigma_arg
     max_sigma = max_sigma_arg
@@ -470,6 +493,8 @@ contains
 
     rc_resistance = resistance
     rc_capacitance = capacitance
+
+    verbose = verbose_arg
   end subroutine store_parameters
 
   ! Get the finest grid spacing of the mesh
@@ -512,6 +537,8 @@ contains
     real(dp)                     :: r(fndims), dr(fndims)
     integer                      :: n, i_var
 
+    if (n_steps <= 1) error stop "n_steps should be at least 2"
+
     select case (varname)
     case ('sigma')
        i_var = i_sigma_tot
@@ -525,6 +552,7 @@ contains
 
     r = r0
     dr = length * direction / (norm2(direction) * (n_steps - 1))
+    success = .false.
 
     do n = 1, n_steps
        line(n:n) = af_interp1(tree, r, [i_var], success)
@@ -545,6 +573,7 @@ contains
     real(dp)              :: prev_residu, max_rhs, initial_residu
     logical               :: converged
 
+    if (verbose > 0) print *, "log: solve()"
     call af_loop_box_arg(tree, set_epsilon_from_sigma, [dt], leaves_only=.true.)
     call af_restrict_tree(tree, [tree%mg_i_eps])
     call af_gc_tree(tree, [tree%mg_i_eps], corners=.false.)
@@ -563,8 +592,12 @@ contains
 
     do n_iterations = 1, max_iterations
        call mg_fas_fmg(tree, mg, set_residual=.true., have_guess=.true.)
+
        call af_tree_maxabs_cc(tree, mg%i_tmp, residu)
        if (n_iterations == 1) initial_residu = residu
+
+       if (verbose > 0) print *, "log: iteration = ", &
+            n_iterations, "residu = ", residu
 
        converged = (residu < max(atol, rtol * max_rhs))
        if (converged .or. residu > 1e2_dp * initial_residu) exit
@@ -583,6 +616,7 @@ contains
     ! Compute electric field with standard Laplace operator
     call mg_compute_phi_gradient(tree, mg_lpl, i_E_vec, -1.0_dp, i_E_norm)
     call af_gc_tree(tree, [i_E_norm])
+    if (verbose > 0) print *, "log: solve() done"
 
   end subroutine solve
 
@@ -643,12 +677,13 @@ contains
     if (abs(applied_voltage) > 0.0_dp) then
        J_displ = energy_deriv/applied_voltage
        J_tot = J_displ + JdotE_integral/applied_voltage
+       gap_conductance = JdotE_integral/applied_voltage**2
     else
        J_displ = 0.0_dp
        J_tot = 0.0_dp
+       gap_conductance = 0.0_dp
     end if
 
-    gap_conductance = JdotE_integral/applied_voltage**2
     prev_time = time
     prev_field_energy = new_field_energy
   end subroutine compute_current
