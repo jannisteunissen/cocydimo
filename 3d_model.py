@@ -86,7 +86,7 @@ parser.add_argument('-transport_data_file', type=str,
                     help='Transport data file')
 parser.add_argument('-k_eff_num_points', type=int, default=200,
                     help='Number of points to use internally for k_eff_table')
-parser.add_argument('-poisson_rtol', type=float, default=1e-5,
+parser.add_argument('-poisson_rtol', type=float, default=1e-3,
                     help='Relative tolerance for Poisson solver')
 parser.add_argument('-poisson_atol', type=float, default=1.0,
                     help='Absolute tolerance for Poisson solver')
