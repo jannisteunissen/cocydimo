@@ -573,7 +573,8 @@ contains
     real(dp)              :: prev_residu, max_rhs, initial_residu
     logical               :: converged
 
-    if (verbose > 0) print *, "log: solve()"
+    if (verbose > 0) print *, "log: solve() - n_cells = ", &
+         af_num_leaves_used(tree) * real(tree%n_cell)**3
     call af_loop_box_arg(tree, set_epsilon_from_sigma, [dt], leaves_only=.true.)
     call af_restrict_tree(tree, [tree%mg_i_eps])
     call af_gc_tree(tree, [tree%mg_i_eps], corners=.false.)
