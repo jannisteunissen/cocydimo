@@ -118,6 +118,8 @@ parser.add_argument('-max_dx', type=float, default=2e-3,
                     help='Maximum allowed grid spacing (m)')
 parser.add_argument('-max_dx_electrode', type=float, default=8e-4,
                     help='Maximum allowed grid spacing around electrode (m)')
+parser.add_argument('-refine_max_dist_head', type=float, default=5e-3,
+                    help='Max. distance from active head for refinement (m)')
 parser.add_argument('-memory_limit', type=float, default=8.0,
                     help='Memory limit (GB)')
 parser.add_argument('-print_performance', action='store_true',
@@ -201,6 +203,7 @@ p3d.initialize_domain(args.domain_size, args.coarse_grid_size,
 p3d.set_refinement(args.refine_E, args.derefine_E,
                    args.min_dx, args.max_dx,
                    args.max_dx_electrode, args.derefine_nlevels,
+                   args.refine_max_dist_head,
                    args.poisson_rtol, args.poisson_atol)
 
 # Initial gas density

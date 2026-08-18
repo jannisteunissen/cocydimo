@@ -210,13 +210,14 @@ contains
 
   ! Set initial grid refinement
   subroutine set_refinement(refine_field, derefine_field, &
-       min_dx, max_dx, electrode_max_dx, derefine_levels, rtol, atol)
+       min_dx, max_dx, electrode_max_dx, derefine_levels, max_head_dist, rtol, atol)
     real(dp), intent(in) :: refine_field     ! Refine when the field is above this value
     real(dp), intent(in) :: derefine_field   ! Derefine when the field is below this value
     real(dp), intent(in) :: min_dx           ! Minimum allowed grid spacing
     real(dp), intent(in) :: max_dx           ! Maximum allowed grid spacing
     real(dp), intent(in) :: electrode_max_dx ! Maximum grid spacing around electrode
     integer, intent(in)  :: derefine_levels  ! How many levels can be derefined
+    real(dp), intent(in) :: max_head_dist    ! Max. distance from head for refinement
     real(dp), intent(in) :: rtol             ! Relative tolerance for Poisson solver
     real(dp), intent(in) :: atol             ! Absolute tolerance for Poisson solver
     integer              :: n_add, n, n_its
@@ -231,6 +232,7 @@ contains
     refine_electrode_max_dx  = electrode_max_dx
     ! Finest dx is between min_dx and 2*min_dx; only derefine when dx < derefine_dx
     derefine_dx              = min_dx * 2**derefine_levels
+    refine_max_distance_head = max_head_dist
 
     call solve(0.0_dp, rtol, atol, n_its, residu)
 
@@ -276,10 +278,10 @@ contains
   end subroutine set_rod_electrode
 
   ! Update sigma (conductivity)
-  subroutine update_sigma(n_in, r0, r1, sigma0, sigma1, radius0, radius1, &
+  subroutine update_sigma(n_in, r0c, r1c, sigma0, sigma1, radius0, radius1, &
        t, dt, channel_delay, first_step, n_streamers)
     integer, intent(in)  :: n_in
-    real(dp), intent(in) :: r0(n_in, fndims), r1(n_in, fndims)
+    real(dp), intent(in) :: r0c(n_in, fndims), r1c(n_in, fndims)
     real(dp), intent(in) :: sigma0(n_in), sigma1(n_in)
     real(dp), intent(in) :: radius0(n_in), radius1(n_in)
     real(dp), intent(in) :: t
@@ -294,10 +296,20 @@ contains
     real(dp)             :: mu_rel, ion_fac
     real(dp)             :: r_min(fndims, n_streamers)
     real(dp)             :: r_max(fndims, n_streamers)
-    real(dp)             :: ra(fndims), rb(fndims)
+    real(dp)             :: r0(fndims, n_in), r1(fndims, n_in)
     integer              :: n_in_box, ix_in_box(n_streamers)
 
     if (verbose > 0) print *, "log: update_sigma()"
+
+    ! Store transposed arrays for better memory access
+    r0(:, :) = transpose(r0c(1:n_streamers, :))
+    r1(:, :) = transpose(r1c(1:n_streamers, :))
+
+    ! Store streamer information for refinement
+    if (n_streamers > max_streamers) error stop "Increase max_streamers"
+    global_n_streamers = n_streamers
+    global_r_heads(:, 1:n_streamers) = r1
+    global_time = t
 
     nc = tree%n_cell
     ion_fac = elem_charge * mu_ion
@@ -305,15 +317,15 @@ contains
 
     ! Determine the extent of channels, with some margin
     do ix = 1, n_streamers
-       length = norm2(r1(ix, :) - r0(ix, :))
+       length = norm2(r1(:, ix) - r0(:, ix))
        radius = max(radius0(ix), radius1(ix))
-       r_min(:, ix) = min(r0(ix, :), r1(ix, :)) - radius - 0.5_dp * length
-       r_max(:, ix) = max(r0(ix, :), r1(ix, :)) + radius + 0.5_dp * length
+       r_min(:, ix) = min(r0(:, ix), r1(:, ix)) - radius - 0.5_dp * length
+       r_max(:, ix) = max(r0(:, ix), r1(:, ix)) + radius + 0.5_dp * length
     end do
 
     if (.not. allocated(k_eff_table)) error stop "Call store_k_eff first"
 
-    !$omp parallel private(lvl, n, id, IJK, r, dist_vec, r_dist, ra, rb, &
+    !$omp parallel private(lvl, n, id, IJK, r, dist_vec, r_dist, &
     !$omp &frac, ix, k_eff, dsigma, box_rmax, n_in_box, ix_in_box, jx, fld_Td)
     do lvl = 1, tree%highest_lvl
        !$omp do
@@ -342,13 +354,12 @@ contains
 
                do jx = 1, n_in_box
                   ix = ix_in_box(jx)
-                  ra(:) = r0(ix, :)
-                  rb(:) = r1(ix, :)
-                  call dist_vec_line(r, ra, rb, fndims, dist_vec, r_dist, frac)
+                  call dist_vec_line(r, r0(:, ix), r1(:, ix), fndims, &
+                       dist_vec, r_dist, frac)
 
                   ! Exclude semi-sphere of previous point
                   if (norm2(dist_vec) <= radius1(ix) .and. (first_step .or. &
-                       (frac >= 0 .and. norm2(ra - r) > radius0(ix)))) then
+                       (frac >= 0 .and. norm2(r0(:, ix) - r) > radius0(ix)))) then
 
                      call get_sigma_profile(r_dist, radius0(ix), radius1(ix), frac, &
                           sigma0(ix), sigma1(ix), dsigma)

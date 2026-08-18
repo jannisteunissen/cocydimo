@@ -14,6 +14,8 @@ module m_solver_lib
   real(dp), parameter, public :: SI_to_Townsend = 1e21_dp ! Convert V/m to Townsend
   real(dp), parameter, public :: Townsend_to_SI = 1e-21_dp ! Convert Townsend to V/m
 
+  integer, parameter :: max_streamers = 2000
+
   type(af_t) :: tree
   type(mg_t) :: mg
   type(mg_t) :: mg_lpl
@@ -121,24 +123,47 @@ module m_solver_lib
   real(dp) :: derefine_dx              = -1.0_dp ! Only derefine up to this value (m)
   real(dp) :: refine_electrode_max_dx  = -1.0_dp ! Maximum dx around electrode (m)
 
+  ! If > 0, maximum distance from head for refinement
+  real(dp) :: refine_max_distance_head = 0.0_dp
+
+  ! Locations of the streamer heads (used for refinement)
+  integer :: global_n_streamers = 0
+  real(dp) :: global_r_heads(fndims, max_streamers)
+
+  ! Global time (used for refinement check)
+  real(dp) :: global_time = 0.0_dp
+
+
 contains
 
   subroutine refinement_criterion(box, cell_flags)
     type(box_t), intent(in) :: box
     integer, intent(out)    :: cell_flags(DTIMES(box%n_cell))
-    real(dp)                :: max_field, dx
+    real(dp)                :: max_field, dx, r_box_center(fndims), distance
     integer                 :: nc
 
     nc = box%n_cell
     max_field = maxval(box%cc(DTIMES(1:nc), i_E_norm))
     dx = minval(box%dr)
 
-    if (max_field > refine_field_threshold .and. dx > 2 * refine_min_dx) then
+    if (refine_max_distance_head > 0 .and. global_time > 1e-8_dp) then
+       r_box_center = box%r_min + 0.5_dp * box%n_cell * box%dr
+       call get_min_head_distance(r_box_center, distance)
+
+       ! Since we measure from the center of the box, subtract half of diagonal
+       distance = distance - norm2(r_box_center - box%r_min)
+    else
+       distance = 0.0_dp
+    end if
+
+    if (max_field > refine_field_threshold .and. dx > 2 * refine_min_dx &
+         .and. distance <= refine_max_distance_head) then
        cell_flags = af_do_ref
     else if (iand(box%tag, mg_lsf_box) > 0 .and. &
          dx > refine_electrode_max_dx) then
        cell_flags = af_do_ref
-    else if (max_field < derefine_field_threshold .and. dx < derefine_dx) then
+    else if ((max_field < derefine_field_threshold .and. dx < derefine_dx) &
+         .or. distance > refine_max_distance_head) then
        cell_flags = af_rm_ref
     else
        cell_flags = af_keep_ref
@@ -148,6 +173,17 @@ contains
     if (dx > refine_max_dx) cell_flags = af_do_ref
 
   end subroutine refinement_criterion
+
+  subroutine get_min_head_distance(r, distance)
+    real(dp), intent(in)  :: r(fndims)
+    real(dp), intent(out) :: distance
+    integer               :: n
+
+    distance = huge(1.0_dp)
+    do n = 1, global_n_streamers
+       distance = min(distance, norm2(r - global_r_heads(:, n)))
+    end do
+  end subroutine get_min_head_distance
 
   subroutine set_epsilon_from_sigma(box, dt_vec)
     type(box_t), intent(inout) :: box
