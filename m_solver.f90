@@ -592,6 +592,7 @@ contains
 
     do n_iterations = 1, max_iterations
        call mg_fas_fmg(tree, mg, set_residual=.true., have_guess=.true.)
+       if (verbose > 1) print *, "log: mg_fas_fmg done"
 
        call af_tree_maxabs_cc(tree, mg%i_tmp, residu)
        if (n_iterations == 1) initial_residu = residu
