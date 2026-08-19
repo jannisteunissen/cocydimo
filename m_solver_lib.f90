@@ -233,7 +233,7 @@ contains
     else if (nb == 2 * fndims) then
        if (use_neumann_bc) then
           bc_type = af_bc_neumann
-          bc_val = -applied_voltage / domain_length(fndims)
+          bc_val = applied_voltage / domain_length(fndims)
        else
           bc_type = af_bc_dirichlet
           bc_val = applied_voltage
