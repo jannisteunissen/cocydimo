@@ -32,7 +32,7 @@ contains
   ! Initialize the computational domain
   subroutine initialize_domain(domain_len, coarse_grid_size, box_size, &
        voltage, mem_limit_gb, write_eps, write_time, write_rhs, &
-       gas_dynamics)
+       gas_dynamics, neumann_bc)
     real(dp), intent(in) :: domain_len(fndims)       ! Domain size (m)
     integer, intent(in)  :: coarse_grid_size(fndims) ! Coarse grid size
     integer, intent(in)  :: box_size                 ! Size of grid boxes
@@ -42,6 +42,7 @@ contains
     logical, intent(in)  :: write_time               ! Write time to output
     logical, intent(in)  :: write_rhs                ! Write rhs to output
     logical, intent(in)  :: gas_dynamics             ! Simulate gas dynamics
+    logical, intent(in)  :: neumann_bc               ! Whether to use Neumann b.c.
     integer              :: coord_t, n
 
     if (verbose > 0) print *, "log: initialize_domain()"
@@ -51,6 +52,8 @@ contains
 
     applied_voltage = voltage
     capacitor_voltage = voltage
+    domain_length = domain_len
+    use_neumann_bc = neumann_bc
 
     call af_add_cc_variable(tree, "phi", ix=mg%i_phi)
     call af_add_cc_variable(tree, "rhs", ix=mg%i_rhs, write_out=write_rhs)
