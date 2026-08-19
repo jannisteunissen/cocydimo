@@ -280,7 +280,7 @@ contains
   ! Update sigma (conductivity)
   subroutine update_sigma(n_in, r0c, r1c, sigma0, sigma1, radius0, radius1, &
        t, dt, channel_delay, first_step, n_streamers)
-    integer, intent(in)  :: n_in
+    integer, intent(in)  :: n_in ! Can be 1 when n_streamers is 0
     real(dp), intent(in) :: r0c(n_in, fndims), r1c(n_in, fndims)
     real(dp), intent(in) :: sigma0(n_in), sigma1(n_in)
     real(dp), intent(in) :: radius0(n_in), radius1(n_in)
@@ -302,13 +302,13 @@ contains
     if (verbose > 0) print *, "log: update_sigma()"
 
     ! Store transposed arrays for better memory access
-    r0(:, :) = transpose(r0c(1:n_streamers, :))
-    r1(:, :) = transpose(r1c(1:n_streamers, :))
+    r0(:, 1:n_streamers) = transpose(r0c(1:n_streamers, :))
+    r1(:, 1:n_streamers) = transpose(r1c(1:n_streamers, :))
 
     ! Store streamer information for refinement
     if (n_streamers > max_streamers) error stop "Increase max_streamers"
     global_n_streamers = n_streamers
-    global_r_heads(:, 1:n_streamers) = r1
+    global_r_heads(:, 1:n_streamers) = r1(:, 1:n_streamers)
     global_time = t
 
     nc = tree%n_cell
