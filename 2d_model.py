@@ -42,6 +42,8 @@ parser.add_argument('-dz_data', type=float, default=30e-3/256,
                     help='Grid spacing used to obtain L_E from dataset (m)')
 parser.add_argument('-phi_bc', type=float, default=-4e4,
                     help='Applied potential (V)')
+parser.add_argument('-phi_factor_vs_time', type=str,
+                    help='File with factor for applied voltage vs time')
 parser.add_argument('-use_circuit', action='store_true',
                     help='Use R-C circuit for voltage source')
 parser.add_argument('-capacitance', type=float, default=1e-9,
@@ -135,6 +137,20 @@ with open(fname, 'w') as f:
 model = mlib.AirStreamerModel(c0=args.c0_L_E_dx, c1=args.c1_L_E_dx,
                               dz0=args.dz_data)
 
+
+def set_voltage(time, V0, voltage_table):
+    voltage = V0
+    if voltage_table is not None:
+        voltage *= np.interp(time, voltage_table[0], voltage_table[1])
+    p2d.set_voltage(voltage)
+
+
+if args.phi_factor_vs_time is not None:
+    voltage_table = np.loadtxt(args.phi_factor_vs_time).T
+else:
+    voltage_table = None
+
+
 np.random.seed(args.rng_seed)
 
 p2d.store_parameters(args.channel_min_sigma,
@@ -165,6 +181,7 @@ dz = p2d.get_finest_grid_spacing()
 print(f'Minimum grid spacing: {dz:.2e}')
 
 # Compute initial solution
+set_voltage(0.0, args.phi_bc, voltage_table)
 p2d.solve(0.0, args.poisson_rtol, args.poisson_atol)
 p2d.write_solution(f'{args.siloname}_{0:04d}', 0, 0.)
 
@@ -273,9 +290,9 @@ for step in range(1, args.n_steps+1):
 
     mlib.update_sigma(2, p2d.update_sigma, streamers, streamers_prev,
                       time, dt, args.channel_update_delay, step == 1)
-    p2d.solve(dt, args.poisson_rtol, args.poisson_atol)
-
     time += dt
+    set_voltage(time, args.phi_bc, voltage_table)
+    p2d.solve(dt, args.poisson_rtol, args.poisson_atol)
 
     J_tot, J_displ, G_eff = p2d.compute_current(time)
 

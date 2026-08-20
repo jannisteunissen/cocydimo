@@ -46,6 +46,8 @@ parser.add_argument('-dz_data', type=float, default=30e-3/256,
                     help='Grid spacing used to obtain L_E from dataset (m)')
 parser.add_argument('-phi_bc', type=float, default=-4e4,
                     help='Applied potential (V)')
+parser.add_argument('-phi_factor_vs_time', type=str,
+                    help='File with factor for applied voltage vs time')
 parser.add_argument('-use_circuit', action='store_true',
                     help='Use R-C circuit for voltage source')
 parser.add_argument('-capacitance', type=float, default=1e-9,
@@ -184,6 +186,20 @@ def find_orthogonal_unit_vector(y):
     return orthvec / norm(orthvec)
 
 
+def set_voltage(time, V0, voltage_table):
+    voltage = V0
+    if voltage_table is not None:
+        voltage *= np.interp(time, voltage_table[0], voltage_table[1])
+    p3d.set_voltage(voltage)
+    print(time, voltage)
+
+
+if args.phi_factor_vs_time is not None:
+    voltage_table = np.loadtxt(args.phi_factor_vs_time).T
+else:
+    voltage_table = None
+
+
 p3d.store_parameters(args.channel_min_sigma,
                      args.channel_max_sigma,
                      args.mu_electron,
@@ -218,6 +234,7 @@ dz = p3d.get_finest_grid_spacing()
 print(f'Minimum grid spacing: {dz:.2e}')
 
 # Compute initial solution
+set_voltage(0.0, args.phi_bc, voltage_table)
 p3d.solve(0.0, args.poisson_rtol, args.poisson_atol)
 p3d.write_solution(f'{args.siloname}_{0:04d}', 0, 0.)
 
@@ -377,11 +394,11 @@ for step in range(1, args.n_steps+1):
     t0 = perf_counter()
     wct_update_sigma += t0 - t1
 
+    time += dt
+    set_voltage(time, args.phi_bc, voltage_table)
     p3d.solve(dt, args.poisson_rtol, args.poisson_atol)
     t1 = perf_counter()
     wct_poisson += t1 - t0
-
-    time += dt
 
     J_tot, J_displ, G_eff = p3d.compute_current(time)
 
@@ -401,4 +418,3 @@ for step in range(1, args.n_steps+1):
     wct_output += t0 - t1
 
     streamers = [s for s in streamers if s.keep]
-
