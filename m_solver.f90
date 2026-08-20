@@ -331,7 +331,7 @@ contains
     !$omp parallel private(lvl, n, id, IJK, r, dist_vec, r_dist, &
     !$omp &frac, ix, k_eff, dsigma, box_rmax, n_in_box, ix_in_box, jx, fld_Td)
     do lvl = 1, tree%highest_lvl
-       !$omp do
+       !$omp do schedule(dynamic)
        do n = 1, size(tree%lvls(lvl)%leaves)
           id = tree%lvls(lvl)%leaves(n)
 
@@ -347,6 +347,10 @@ contains
                   ix_in_box(n_in_box) = ix
                end if
             end do
+
+            ! Skip boxes without streamers and conductivity
+            if (n_in_box == 0 .and. &
+                 all(box%cc(DTIMES(1:nc), i_sigma_e) <= 0.0_dp)) cycle
 
             do KJI_DO(1, nc)
                if (rod_radius > 0) then
