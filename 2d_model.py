@@ -42,8 +42,6 @@ parser.add_argument('-dz_data', type=float, default=30e-3/256,
                     help='Grid spacing used to obtain L_E from dataset (m)')
 parser.add_argument('-phi_bc', type=float, default=-4e4,
                     help='Applied potential (V)')
-parser.add_argument('-phi_neumann', action='store_true',
-                    help='Use Neumann b.c. for phi at top of domain')
 parser.add_argument('-use_circuit', action='store_true',
                     help='Use R-C circuit for voltage source')
 parser.add_argument('-capacitance', type=float, default=1e-9,
@@ -152,7 +150,7 @@ p2d.set_rod_electrode(args.rod_r0, args.rod_r1, args.rod_radius)
 p2d.initialize_domain(args.domain_size, args.coarse_grid_size,
                       args.box_size, args.phi_bc, args.memory_limit,
                       args.write_eps, args.write_time, args.write_rhs,
-                      args.gas_dynamics, args.phi_neumann)
+                      args.gas_dynamics)
 p2d.use_uniform_grid(args.grid_size)
 
 # Initial gas density

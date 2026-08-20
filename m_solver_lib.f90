@@ -30,16 +30,12 @@ module m_solver_lib
   ! How verbose the code is
   integer :: verbose = 0
 
-  ! Size of the computational domain
-  real(dp) :: domain_length(fndims) = 0.0_dp
-
   ! For simple R-C circuit
   real(dp) :: C_gap = 0.0_dp             ! Geometric gap capacitance [F]
   real(dp) :: applied_voltage = 0.0_dp   ! Gap voltage [V]
   real(dp) :: capacitor_voltage = 0.0_dp ! Capacitor voltage [V]
   real(dp) :: rc_resistance = 0.0_dp ! RC resistance [Ohm]
   real(dp) :: rc_capacitance = 0.0_dp ! RC capacitance [farad]
-  logical  :: use_neumann_bc = .false.
 
   ! Maximum electron conductivity. Relevant in regions where the field remains
   ! above the critical field.
@@ -231,13 +227,8 @@ contains
        bc_type = af_bc_dirichlet
        bc_val = 0.0_dp
     else if (nb == 2 * fndims) then
-       if (use_neumann_bc) then
-          bc_type = af_bc_neumann
-          bc_val = applied_voltage / domain_length(fndims)
-       else
-          bc_type = af_bc_dirichlet
-          bc_val = applied_voltage
-       end if
+       bc_type = af_bc_dirichlet
+       bc_val = applied_voltage
     else
        bc_type = af_bc_neumann
        bc_val = 0.0_dp
