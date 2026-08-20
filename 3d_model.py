@@ -191,7 +191,6 @@ def set_voltage(time, V0, voltage_table):
     if voltage_table is not None:
         voltage *= np.interp(time, voltage_table[0], voltage_table[1])
     p3d.set_voltage(voltage)
-    print(time, voltage)
 
 
 if args.phi_factor_vs_time is not None:
