@@ -9,6 +9,7 @@ import os
 from numpy.linalg import norm
 import model_lib as mlib
 from poisson_2d import m_solver as p2d
+import matplotlib.pyplot as plt
 
 parser = argparse.ArgumentParser(
     formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -120,7 +121,10 @@ parser.add_argument('-gas_slow_heat_timescale', type=float, default=20.0e-6,
                     help='Time scale for slow heating (s)')
 parser.add_argument('-verbose', type=int, default=0,
                     help='How verbose the code is (> 0 shows more info)')
-
+parser.add_argument('-ODE_model', action='store_true',
+                    help='Use ODE model for sigma_head')
+parser.add_argument('-fit_radius', action='store_true',
+                    help='Use fit radius model to determine radius')
 args = parser.parse_args()
 
 # Make sure output folder exists
@@ -258,14 +262,48 @@ for step in range(1, args.n_steps+1):
 
         # Propagation in +z direction
         E_hat = np.array([0.0, 1.0])
-
+        
+        # =======================>
         s.L_E = L_E
-        s.sigma = model.get_sigma(L_E, N0)
         s.v = model.get_velocity(L_E, N0) * E_hat
+        
+        # Calculate background and maximum electric field
+        i_max = np.argmax(np.abs(E))
+        if E[i_max] < 0:
+            E = -E
+        Emax = E[i_max]
+        Ebg  = np.abs(args.phi_bc / args.domain_size[-1])
 
-        dR = min(args.r_scale * model.get_radius(L_E, N0) - s.R,
-                 norm(s.v) * dt)
-        s.R = s.R + dR
+        if args.ODE_model:
+            if args.fit_radius:
+                # Use fit on the electric field to calculate R
+                dR = min(args.r_scale * model.get_fit_radius(z, E, Ebg, 0.25) - s.R,
+                         norm(s.v) * dt)
+                s.R = s.R + dR
+            if False:
+                # Use analytical Radius
+                dR = min(args.r_scale * model.get_radius(L_E, N0) - s.R,
+                     norm(s.v) * dt)
+                s.R = s.R + dR
+                s.sigma, Rode = model.get_ODE_sigma(model.get_velocity(L_E, N0), Ebg, 
+                                          args.domain_size[0], Radius=s.R)
+            else:
+                # Use ODE radius
+                s.sigma, Rode = model.get_ODE_sigma(model.get_velocity(L_E, N0), Ebg, 
+                                          args.domain_size[0], Emax=Emax)
+                dR = min(args.r_scale * Rode - s.R, norm(s.v) * dt)
+                s.R = s.R + dR
+            
+            Emaxlist.append(Emax)
+            Rlist.append(s.R)
+            sigmalist.append(s.sigma)
+        else:
+            s.sigma = model.get_sigma(L_E, N0)
+            dR = min(args.r_scale * model.get_radius(L_E, N0) - s.R,
+                     norm(s.v) * dt)
+            s.R = s.R + dR
+        # =======================>
+
         s.r = s.r + s.v * (dt - 0.99 * dR/norm(s.v))
 
     if args.gas_dynamics:
