@@ -293,10 +293,6 @@ for step in range(1, args.n_steps+1):
                                           args.domain_size[0], Emax=Emax)
                 dR = min(args.r_scale * Rode - s.R, norm(s.v) * dt)
                 s.R = s.R + dR
-            
-            Emaxlist.append(Emax)
-            Rlist.append(s.R)
-            sigmalist.append(s.sigma)
         else:
             s.sigma = model.get_sigma(L_E, N0)
             dR = min(args.r_scale * model.get_radius(L_E, N0) - s.R,

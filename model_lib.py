@@ -178,7 +178,7 @@ class AirStreamerModel():
         ne = ne_z[:, None] * fr[None, :]
 
         Td_to_SI = 1e-21 * self.N0
-        TD_mu = np.loadtxt("input/reduced_mu_phelps_jannis.txt", skiprows=2).T
+        TD_mu = np.loadtxt("data/reduced_mu_phelps_jannis.txt", skiprows=2).T
         f_mu = interp1d(Td_to_SI * TD_mu[0], TD_mu[1]/self.N0, fill_value='extrapolate')
         mu_z = f_mu(np.abs(E_z))
         mu_rz = mu_z[:, None]
