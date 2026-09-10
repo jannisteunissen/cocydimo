@@ -144,6 +144,8 @@ parser.add_argument('-gas_slow_heat_timescale', type=float, default=20.0e-6,
                     help='Time scale for slow heating (s)')
 parser.add_argument('-verbose', type=int, default=0,
                     help='How verbose the code is (> 0 shows more info)')
+parser.add_argument('-ODE_model', action='store_true',
+                    help='Use ODE model for sigma_head')
 
 args = parser.parse_args()
 
@@ -352,12 +354,23 @@ for step in range(1, args.n_steps+1):
             L_E = args.alpha * L_E_new + (1 - args.alpha) * s.L_E
 
         s.L_E = L_E
-        s.sigma = model.get_sigma(L_E, N0)
+        #s.sigma = model.get_sigma(L_E, N0)
         s.v = model.get_velocity(L_E, N0) * E_hat
-
         dR = min(args.r_scale * model.get_radius(L_E, N0) - s.R,
                  norm(s.v) * dt)
         s.R = s.R + dR
+        # =======================>
+        Ebg = np.abs(args.phi_bc / args.domain_size[-1])
+        #print(f"Ebg = {Ebg:.3e} V/m, ",
+        #      f"R = {s.R:.3e} m, ",
+        #      f"v = {model.get_velocity(L_E, N0):.3e} m/s")
+        if args.ODE_model:
+            s.sigma = model.get_ODE_sigma(s.R, model.get_velocity(L_E, N0), Ebg,
+                                          args.domain_size[0])
+        else:
+            s.sigma = model.get_sigma(L_E, N0)
+        # =======================>
+
         s.r = s.r + s.v * (dt - 0.99 * dR/norm(s.v))
         s.n_steps += 1
 
