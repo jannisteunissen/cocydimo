@@ -19,10 +19,10 @@ def ODE_model(Q=0.5, v=5e4, R=None, E_max=None, fixed_I_ph=None,
               p=1.0, frac_O2=0.2, p_q=40e-3, photoi_eff=0.075, L_factor=1.0,
               E_threshold=1.0, rtol=1e-5, neg_streamer=False,
               use_diffusion=False,
-              alpha_table="input/reduced_alpha_phelps_jannis.txt",
-              eta_table="input/reduced_eta_phelps_jannis.txt",
-              mu_table="input/reduced_mu_phelps_jannis.txt",
-              dif_table="input/reduced_dif_Phelps.txt"):
+              alpha_table="data/reduced_alpha_phelps_jannis.txt",
+              eta_table="data/reduced_eta_phelps_jannis.txt",
+              mu_table="data/reduced_mu_phelps_jannis.txt",
+              dif_table="data/reduced_dif_Phelps.txt"):
 
     # Gas number density from ideal gas law
     N0 = p * 1.0e5 / (c.k * T)
