@@ -156,14 +156,13 @@ class AirStreamerModel():
                      1e-8 + 1.397 * 1e-6 + (L_EN - 1e-3) * 2 * 1.397 * 1e-3)
         return sigma
     
-    def get_ODE_sigma(self, velocity, field, Rdomain, Radius=None, Emax=None):
-        
+    def get_ODE_sigma(self, velocity, field, Rdomain, Radius=None, Emax=None): 
         if Radius == None and Emax == None:
             sys.exit("Error: either define Emax or R, not both.")
         elif not Radius == None:
             sol = ODE_model.ODE_model(E_bg=field, v=velocity, R=Radius, L_factor=2.5)
         elif not Emax == None:
-                sol = ODE_model.ODE_model(E_bg=field, v=velocity, E_max=Emax, rtol=1e-6)
+                sol = ODE_model.ODE_model(E_bg=field, v=velocity, E_max=Emax, rtol=1e-8)
 
         # Calculate sigma based on ODE profile
         z  = sol.z
@@ -172,16 +171,18 @@ class AirStreamerModel():
         E_z  = sol.E
         if Radius == None:
             Radius = sol.R
-            print(f"R = {Radius * 1e3:.3f} mm")
-
-        r  = np.linspace(0, Radius, 12000)
-        fr = np.maximum(0, 2*(1 - (r/Radius)**2))
+        
+        doezol_factor = 2.0
+        r  = np.linspace(0, Rdomain, 12000)
+        fr = np.maximum(0, 2*(1 - (r/(Radius/doezol_factor))**2))
         ne = ne_z[:, None] * fr[None, :]
+        
         Td_to_SI = 1e-21 * self.N0
         TD_mu = np.loadtxt("data/reduced_mu_phelps_jannis.txt", skiprows=2).T
         f_mu = interp1d(Td_to_SI * TD_mu[0], TD_mu[1]/self.N0, fill_value='extrapolate')
         mu_z = f_mu(np.abs(E_z))
         mu_rz = mu_z[:, None]
+        
         integrand = r[None,:] * mu_rz * ne
         sigma_z = 2.0*np.pi*c.e*simpson(integrand, x=r)
 
@@ -192,16 +193,11 @@ class AirStreamerModel():
         sigma = f_sigma(ztarget)
         return sigma, Radius
     
-    def get_fit_radius(self, z, E, E_bg, factor):
-        i_max = np.argmax(np.abs(E))
-        if E[i_max] < 0:
-            E = -E
-        E_max = E[i_max]
-
+    def get_fit_radius(self, z, E, E_max, i_max, E_bg, factor):
         distance_pos = np.argmax(E[i_max:] < factor * E_max)
         distance_neg = np.argmax(np.flip(E[:i_max+1]) < factor * E_max)
         direction = np.sign(distance_pos - distance_neg)
-
+        
         if direction > 0:
             z = z[i_max:i_max+distance_pos+1] - z[i_max]
             E = E[i_max:i_max+distance_pos+1]
@@ -218,7 +214,7 @@ class AirStreamerModel():
         popt, pcov = curve_fit(fit_func, z[n_skip:], E[n_skip:],
                                p0=[R_guess, E[n_skip]])
         R = popt[0]
-        Emax = popt[1]
+        #Emax = popt[1]
         return R
     
     def get_L_E(self, z, E, N, dz=None, prev=None):

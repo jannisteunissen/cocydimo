@@ -125,6 +125,8 @@ parser.add_argument('-ODE_model', action='store_true',
                     help='Use ODE model for sigma_head')
 parser.add_argument('-fit_radius', action='store_true',
                     help='Use fit radius model to determine radius')
+parser.add_argument('-analytical_radius', action='store_true',
+                    help="Use analytical radius function")
 args = parser.parse_args()
 
 # Make sure output folder exists
@@ -276,23 +278,28 @@ for step in range(1, args.n_steps+1):
 
         if args.ODE_model:
             if args.fit_radius:
-                # Use fit on the electric field to calculate R
-                dR = min(args.r_scale * model.get_fit_radius(z, E, Ebg, 0.25) - s.R,
+                # Use fit Radius
+                dR = min(args.r_scale * model.get_fit_radius(z, E, Emax, i_max, Ebg, 0.25) - s.R,
                          norm(s.v) * dt)
                 s.R = s.R + dR
-            if False:
+                s.sigma, Rode = model.get_ODE_sigma(model.get_velocity(L_E, N0), Ebg,
+                                          args.domain_size[0], Radius=s.R)
+                print(f"Fit Radius = {s.R * 1e3:.3f} mm")
+            elif args.analytical_radius:
                 # Use analytical Radius
                 dR = min(args.r_scale * model.get_radius(L_E, N0) - s.R,
                      norm(s.v) * dt)
                 s.R = s.R + dR
                 s.sigma, Rode = model.get_ODE_sigma(model.get_velocity(L_E, N0), Ebg, 
                                           args.domain_size[0], Radius=s.R)
+                print(f"Analytical Radius = {s.R * 1e3:.3f} mm")
             else:
                 # Use ODE radius
                 s.sigma, Rode = model.get_ODE_sigma(model.get_velocity(L_E, N0), Ebg, 
                                           args.domain_size[0], Emax=Emax)
                 dR = min(args.r_scale * Rode - s.R, norm(s.v) * dt)
                 s.R = s.R + dR
+                print(f"ODE Radius = {s.R * 1e3:.3f} mm")
         else:
             s.sigma = model.get_sigma(L_E, N0)
             dR = min(args.r_scale * model.get_radius(L_E, N0) - s.R,
