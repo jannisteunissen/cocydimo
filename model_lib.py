@@ -6,6 +6,7 @@ from scipy import constants as c
 from scipy.integrate import simpson
 from scipy.interpolate import interp1d
 from scipy.optimize import curve_fit
+import matplotlib.pyplot as plt
 
 K_BOLTZMANN = 1.380649e-23  # J/K
 
@@ -167,22 +168,20 @@ class AirStreamerModel():
         # Calculate sigma based on ODE profile
         z  = sol.z
         ne_z = sol.ne
-        #ni_z = sol.ni
+        ni_z = sol.ni
         E_z  = sol.E
         if Radius == None:
             Radius = sol.R
             print(f"R = {Radius * 1e3:.3f} mm")
-        
-        r  = np.linspace(0, Rdomain, 12000)
-        fr = np.maximum(0, 2*(1 - (r/(Radius)**2)))
-        ne = ne_z[:, None] * fr[None, :]
 
+        r  = np.linspace(0, Radius, 12000)
+        fr = np.maximum(0, 2*(1 - (r/Radius)**2))
+        ne = ne_z[:, None] * fr[None, :]
         Td_to_SI = 1e-21 * self.N0
         TD_mu = np.loadtxt("data/reduced_mu_phelps_jannis.txt", skiprows=2).T
         f_mu = interp1d(Td_to_SI * TD_mu[0], TD_mu[1]/self.N0, fill_value='extrapolate')
         mu_z = f_mu(np.abs(E_z))
         mu_rz = mu_z[:, None]
-        
         integrand = r[None,:] * mu_rz * ne
         sigma_z = 2.0*np.pi*c.e*simpson(integrand, x=r)
 
