@@ -39,7 +39,7 @@ class Streamer():
         with np.printoptions(formatter={'float': lambda x: format(x, '.2E')}):
             r = f'Streamer(r = {self.r}, v = {self.v}, ' + \
                 f'sigma = {self.sigma:.2e}, R = {self.R:.2e}, ' + \
-                f'steps = {self.n_steps})'
+                f'L_E = {self.L_E:.2e})'
         return r
 
 
@@ -144,7 +144,9 @@ class AirStreamerModel():
 
         """
         L_EN = L_E * N/self.N0
-        sigma = (self.N0/N)**2 * \
+
+        # Note: n_e * R^2 scales as N^0, mu_e as 1/N
+        sigma = (self.N0/N) * \
             np.where(L_EN < 1e-3,
                      1e-8 + 1.397 * L_EN**2,
                      1e-8 + 1.397 * 1e-6 + (L_EN - 1e-3) * 2 * 1.397 * 1e-3)
@@ -192,10 +194,12 @@ class AirStreamerModel():
 
         # Apply correction for finite grid spacing
         if dz is not None:
-            if dz > self.dz0:
-                L_E += self.c0 * (dz - self.dz0)
+            # Lengths should scale as 1/N
+            dz_scaled = self.dz0 * (self.N0/N)
+            if dz > dz_scaled:
+                L_E += self.c0 * (dz - dz_scaled)
             else:
-                L_E += self.c1 * (dz - self.dz0)
+                L_E += self.c1 * (dz - dz_scaled)
 
         return L_E
 
@@ -298,7 +302,7 @@ def read_swarm_file(filename):
 def effective_ionization_rate(filename, gas_temperature, pressure_bar):
     """Compute the effective ionization rate coefficient [1/s].
 
-    k_eff = v_drift * (alpha - eta - k3 * N_O2)
+    k_eff = v_drift * (alpha - eta - k3 * N_O2**2)
     """
     data = read_swarm_file(filename)
 
