@@ -72,9 +72,9 @@ parser.add_argument('-mu_ion', type=float, default=2e-4,
 parser.add_argument('-k_ion_recombination', type=float, default=1e-13,
                     help='Ion-ion recombination rate constant (m^3/s)')
 parser.add_argument('-L_E_max', type=float, default=5e-3,
-                    help='Maximum value of L_E (m)')
+                    help='Maximum of L_E (m) at 1 bar, 300 K (is scaled)')
 parser.add_argument('-L_E_min', type=float, default=1e-4,
-                    help='Minimum value of L_E (m)')
+                    help='Minimum of L_E (m) at 1 bar, 300 K (is scaled)')
 parser.add_argument('-c0_L_E_dx', type=float, default=0.75,
                     help='Correction factor for L_E w.r.t. data grid spacing')
 parser.add_argument('-c1_L_E_dx', type=float, default=0.0,
@@ -125,6 +125,8 @@ parser.add_argument('-verbose', type=int, default=0,
 
 args = parser.parse_args()
 
+k_b = 1.3806503e-23             # Boltzmann constant
+
 # Make sure output folder exists
 os.makedirs(os.path.dirname(args.siloname), exist_ok=True)
 
@@ -170,7 +172,11 @@ p2d.initialize_domain(args.domain_size, args.coarse_grid_size,
 p2d.use_uniform_grid(args.grid_size)
 
 # Initial gas density
-N0 = 1e5 * args.pressure / (args.temperature * 1.380649e-23)
+N0 = 1e5 * args.pressure / (args.temperature * k_b)
+
+# Scaled values for L_E_max and min
+L_E_max = args.L_E_max * (1.0/args.pressure) * (args.temperature/300)
+L_E_min = args.L_E_min * (1.0/args.pressure) * (args.temperature/300)
 
 if args.gas_dynamics:
     p2d.set_gas(args.pressure, args.temperature, args.mean_molecular_weight,
@@ -201,7 +207,7 @@ p2d.store_k_eff(x[0], x[-1], y)
 # Get L_E to estimate initial streamer radius
 Emax, r_Emax = p2d.get_max_field_location()
 z, E, success = p2d.get_var_along_line('E_norm', [0.0, r_Emax[1]], [0., 1.0],
-                                       args.L_E_max, 2*args.L_E_max/dz)
+                                       L_E_max, 2*L_E_max/dz)
 if not success:
     raise RuntimeError('Interpolation error')
 
@@ -255,7 +261,7 @@ for step in range(1, args.n_steps+1):
             N0, success = p2d.get_gas_number_density_at(r_tip)
 
         z, E, success = p2d.get_var_along_line('E_norm', r_tip, s.v,
-                                               args.L_E_max, 2*args.L_E_max/dz)
+                                               L_E_max, 2*L_E_max/dz)
 
         if success:
             L_E_new = model.get_L_E(z, E, N0, dz, prev=s.L_E)
@@ -263,7 +269,7 @@ for step in range(1, args.n_steps+1):
             # Use previous value
             L_E_new = s.L_E
 
-        if L_E_new < args.L_E_min:
+        if L_E_new < L_E_min:
             print(f'L_E too small {L_E_new:.2e}, removing streamer')
             s.keep = False
             continue

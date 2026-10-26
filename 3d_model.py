@@ -151,6 +151,8 @@ parser.add_argument('-verbose', type=int, default=0,
 
 args = parser.parse_args()
 
+k_b = 1.3806503e-23             # Boltzmann constant
+
 # Make sure output folder exists
 os.makedirs(os.path.dirname(args.siloname), exist_ok=True)
 
@@ -222,7 +224,11 @@ p3d.set_refinement(args.refine_E, args.derefine_E,
                    args.poisson_rtol, args.poisson_atol)
 
 # Initial gas density
-N0 = 1e5 * args.pressure / (args.temperature * 1.380649e-23)
+N0 = 1e5 * args.pressure / (args.temperature * k_b)
+
+# Scaled values for L_E_max and min
+L_E_max = args.L_E_max * (1.0/args.pressure) * (args.temperature/300)
+L_E_min = args.L_E_min * (1.0/args.pressure) * (args.temperature/300)
 
 if args.gas_dynamics:
     p3d.set_gas(args.pressure, args.temperature, args.mean_molecular_weight,
@@ -258,10 +264,10 @@ else:
 
 # Get L_E to estimate initial streamer radius
 z, E, success = p3d.get_var_along_line('E_norm', r_start, [0., 0., 1.0],
-                                       args.L_E_max, 2*args.L_E_max/dz)
+                                       L_E_max, 2*L_E_max/dz)
 if not success:
     raise RuntimeError('Interpolation error at r_start')
-L_E = model.get_L_E(z, E, N0, dz, prev=args.L_E_max)
+L_E = model.get_L_E(z, E, N0, dz, prev=L_E_max)
 
 # Start with a smaller radius to approximate initial phase
 radius0 = 0.5 * args.r_scale * model.get_radius(L_E, N0)
@@ -351,7 +357,7 @@ for step in range(1, args.n_steps+1):
         # Get samples of |E| ahead of the streamer to determine L_E
         r_tip = s.r + 0.5 * s.R * s.v/norm(s.v)
         z, E, success = p3d.get_var_along_line('E_norm', r_tip, E_hat,
-                                               args.L_E_max, 2*args.L_E_max/dz)
+                                               L_E_max, 2*L_E_max/dz)
 
         if success:
             L_E_new = model.get_L_E(z, E, N0, dz, prev=s.L_E)
@@ -359,7 +365,7 @@ for step in range(1, args.n_steps+1):
             # Use previous value
             L_E_new = s.L_E
 
-        if L_E_new < args.L_E_min:
+        if L_E_new < L_E_min:
             print('L_E too small, removing streamer')
             s.keep = False
             continue
